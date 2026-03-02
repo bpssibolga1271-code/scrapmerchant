@@ -824,9 +824,156 @@ async function scrapeGoFood(regionCode, regionName) {
   }
 }
 
-async function scrapeLazada(_regionCode, _regionName) {
-  // TODO: Implement Lazada scraper
-  return [];
+// ── Lazada Scraper ──────────────────────────────────────────
+
+/**
+ * Lazada location mapping. Maps BPS province names to Lazada's
+ * location filter values. Lazada Indonesia uses province-level
+ * location names in search filters.
+ */
+const LAZADA_LOCATION_MAP = {
+  'ACEH': 'Aceh',
+  'SUMATERA UTARA': 'Sumatera Utara',
+  'SUMATERA BARAT': 'Sumatera Barat',
+  'RIAU': 'Riau',
+  'JAMBI': 'Jambi',
+  'SUMATERA SELATAN': 'Sumatera Selatan',
+  'BENGKULU': 'Bengkulu',
+  'LAMPUNG': 'Lampung',
+  'KEPULAUAN BANGKA BELITUNG': 'Kepulauan Bangka Belitung',
+  'KEPULAUAN RIAU': 'Kepulauan Riau',
+  'DKI JAKARTA': 'DKI Jakarta',
+  'JAWA BARAT': 'Jawa Barat',
+  'JAWA TENGAH': 'Jawa Tengah',
+  'DI YOGYAKARTA': 'DI Yogyakarta',
+  'JAWA TIMUR': 'Jawa Timur',
+  'BANTEN': 'Banten',
+  'BALI': 'Bali',
+  'NUSA TENGGARA BARAT': 'Nusa Tenggara Barat',
+  'NUSA TENGGARA TIMUR': 'Nusa Tenggara Timur',
+  'KALIMANTAN BARAT': 'Kalimantan Barat',
+  'KALIMANTAN TENGAH': 'Kalimantan Tengah',
+  'KALIMANTAN SELATAN': 'Kalimantan Selatan',
+  'KALIMANTAN TIMUR': 'Kalimantan Timur',
+  'KALIMANTAN UTARA': 'Kalimantan Utara',
+  'SULAWESI UTARA': 'Sulawesi Utara',
+  'SULAWESI TENGAH': 'Sulawesi Tengah',
+  'SULAWESI SELATAN': 'Sulawesi Selatan',
+  'SULAWESI TENGGARA': 'Sulawesi Tenggara',
+  'GORONTALO': 'Gorontalo',
+  'SULAWESI BARAT': 'Sulawesi Barat',
+  'MALUKU': 'Maluku',
+  'MALUKU UTARA': 'Maluku Utara',
+  'PAPUA': 'Papua',
+  'PAPUA BARAT': 'Papua Barat',
+  'PAPUA BARAT DAYA': 'Papua Barat Daya',
+  'PAPUA TENGAH': 'Papua Tengah',
+  'PAPUA PEGUNUNGAN': 'Papua Pegunungan',
+  'PAPUA SELATAN': 'Papua Selatan',
+};
+
+/**
+ * Build a Lazada search/catalog URL filtered by region.
+ * Lazada uses the `catalog/?q=` search page with optional
+ * location parameters.
+ * @param {string} regionName — human-readable region name (typically uppercase BPS name)
+ * @returns {string}
+ */
+function buildLazadaSearchUrl(regionName) {
+  const base = 'https://www.lazada.co.id/catalog/';
+  const params = new URLSearchParams({
+    q: '',
+  });
+
+  // Try exact match first (BPS names are uppercase)
+  const upperName = regionName.toUpperCase().trim();
+  if (LAZADA_LOCATION_MAP[upperName]) {
+    params.set('location', LAZADA_LOCATION_MAP[upperName]);
+  } else {
+    // Fuzzy match: find the first location key that contains the region name
+    for (const [key, locationName] of Object.entries(LAZADA_LOCATION_MAP)) {
+      if (
+        key.includes(upperName) ||
+        upperName.includes(key) ||
+        locationName.toLowerCase().includes(regionName.toLowerCase())
+      ) {
+        params.set('location', locationName);
+        break;
+      }
+    }
+  }
+
+  return `${base}?${params.toString()}`;
+}
+
+/**
+ * Scrape Lazada merchants for a given region.
+ *
+ * Flow:
+ *   1. Map regionName to a Lazada location filter
+ *   2. Open a new tab to the Lazada catalog/search page
+ *   3. Wait for the tab to finish loading
+ *   4. Send a `startScrape` message to the content script
+ *   5. Collect results from the content script response
+ *   6. Close the tab
+ *   7. Return the merchants array
+ *
+ * @param {string} regionCode
+ * @param {string} regionName
+ * @returns {Promise<Array<Object>>}
+ */
+async function scrapeLazada(regionCode, regionName) {
+  const SCRAPE_TIMEOUT_MS = 180000; // 3 minutes — Lazada JS-rendered content loads slowly
+
+  const searchUrl = buildLazadaSearchUrl(regionName);
+  console.log(`[SE] Opening Lazada search: ${searchUrl}`);
+
+  let tab;
+
+  try {
+    // 1. Open a new tab
+    tab = await chrome.tabs.create({ url: searchUrl, active: false });
+
+    // 2. Wait for the tab to finish loading
+    await waitForTabLoad(tab.id);
+
+    // 3. Extra delay — Lazada React SPA needs time to hydrate and render
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // 4. Send the startScrape message and await response
+    const response = await sendMessageWithTimeout(
+      tab.id,
+      {
+        action: 'startScrape',
+        platform: 'lazada',
+        regionCode,
+        regionName,
+      },
+      SCRAPE_TIMEOUT_MS
+    );
+
+    if (response && response.success && Array.isArray(response.merchants)) {
+      console.log(
+        `[SE] Lazada scrape complete: ${response.merchants.length} merchants`
+      );
+      return response.merchants;
+    }
+
+    console.warn('[SE] Lazada scrape returned no data:', response);
+    return [];
+  } catch (err) {
+    console.error('[SE] Lazada scrape failed:', err);
+    return [];
+  } finally {
+    // 5. Close the tab regardless of outcome
+    if (tab && tab.id) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch {
+        // Tab may already be closed
+      }
+    }
+  }
 }
 
 // ── Blibli Scraper ──────────────────────────────────────────
