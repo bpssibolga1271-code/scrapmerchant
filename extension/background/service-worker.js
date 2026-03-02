@@ -834,7 +834,78 @@ async function scrapeBlibli(_regionCode, _regionName) {
   return [];
 }
 
-async function scrapeZalora(_regionCode, _regionName) {
-  // TODO: Implement Zalora scraper
-  return [];
+/**
+ * Scrape Zalora brands from the brands directory page.
+ *
+ * Zalora is fashion-focused — "merchants" are "brands". The brands
+ * directory at /brands/ contains an alphabetical A-Z listing with
+ * simple HTML structure, making it the easiest platform to scrape.
+ *
+ * Flow:
+ *   1. Open a new tab to the Zalora brands directory page
+ *   2. Wait for the tab to finish loading
+ *   3. Send a `startScrape` message to the content script
+ *   4. Collect results from the content script response
+ *   5. Close the tab
+ *   6. Return the merchants array
+ *
+ * Note: Zalora brands are not region-specific (national directory),
+ * but we still tag results with the requested region for consistency.
+ *
+ * @param {string} regionCode
+ * @param {string} regionName
+ * @returns {Promise<Array<Object>>}
+ */
+async function scrapeZalora(regionCode, regionName) {
+  const SCRAPE_TIMEOUT_MS = 120000; // 2 minutes
+  const BRANDS_URL = 'https://www.zalora.co.id/brands/';
+
+  console.log(`[SE] Opening Zalora brands directory: ${BRANDS_URL}`);
+
+  let tab;
+
+  try {
+    // 1. Open a new tab to the brands directory
+    tab = await chrome.tabs.create({ url: BRANDS_URL, active: false });
+
+    // 2. Wait for the tab to finish loading
+    await waitForTabLoad(tab.id);
+
+    // 3. Small delay for page rendering
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // 4. Send the startScrape message and await response
+    const response = await sendMessageWithTimeout(
+      tab.id,
+      {
+        action: 'startScrape',
+        platform: 'zalora',
+        regionCode,
+        regionName,
+      },
+      SCRAPE_TIMEOUT_MS
+    );
+
+    if (response && response.success && Array.isArray(response.merchants)) {
+      console.log(
+        `[SE] Zalora scrape complete: ${response.merchants.length} brands`
+      );
+      return response.merchants;
+    }
+
+    console.warn('[SE] Zalora scrape returned no data:', response);
+    return [];
+  } catch (err) {
+    console.error('[SE] Zalora scrape failed:', err);
+    return [];
+  } finally {
+    // 5. Close the tab regardless of outcome
+    if (tab && tab.id) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch {
+        // Tab may already be closed
+      }
+    }
+  }
 }
