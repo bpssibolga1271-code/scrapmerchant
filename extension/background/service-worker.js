@@ -374,9 +374,134 @@ async function scrapeShopee(_regionCode, _regionName) {
   return [];
 }
 
-async function scrapeGrabFood(_regionCode, _regionName) {
-  // TODO: Implement GrabFood scraper
-  return [];
+// ── GrabFood Scraper ────────────────────────────────────────
+
+/**
+ * GrabFood city/region mapping. Maps common BPS region names
+ * to GrabFood city slugs used in the URL path.
+ * GrabFood Indonesia URL pattern: https://food.grab.com/id/en/restaurants
+ * The city is typically inferred from geolocation, but we can append
+ * a search query or use known city-level URL segments.
+ */
+const GRABFOOD_CITY_MAP = {
+  'Jakarta': 'jakarta',
+  'DKI Jakarta': 'jakarta',
+  'Bandung': 'bandung',
+  'Surabaya': 'surabaya',
+  'Semarang': 'semarang',
+  'Yogyakarta': 'yogyakarta',
+  'Medan': 'medan',
+  'Makassar': 'makassar',
+  'Palembang': 'palembang',
+  'Denpasar': 'denpasar',
+  'Bali': 'denpasar',
+  'Malang': 'malang',
+  'Bekasi': 'bekasi',
+  'Tangerang': 'tangerang',
+  'Depok': 'depok',
+  'Bogor': 'bogor',
+  'Balikpapan': 'balikpapan',
+  'Manado': 'manado',
+  'Pontianak': 'pontianak',
+  'Banjarmasin': 'banjarmasin',
+  'Padang': 'padang',
+  'Pekanbaru': 'pekanbaru',
+  'Lampung': 'bandar-lampung',
+  'Bandar Lampung': 'bandar-lampung',
+  'Solo': 'solo',
+  'Surakarta': 'solo',
+  'Batam': 'batam',
+};
+
+/**
+ * Build a GrabFood restaurants URL for a given region.
+ * @param {string} regionName — human-readable region name
+ * @returns {string}
+ */
+function buildGrabFoodUrl(regionName) {
+  const base = 'https://food.grab.com/id/en/restaurants';
+
+  // Try to find a matching city slug for the region
+  for (const [key, citySlug] of Object.entries(GRABFOOD_CITY_MAP)) {
+    if (regionName.toLowerCase().includes(key.toLowerCase())) {
+      // GrabFood doesn't use city in the URL path for /restaurants,
+      // but we can pass it as a query hint for the content script
+      return `${base}?city=${encodeURIComponent(citySlug)}`;
+    }
+  }
+
+  // Fallback: use the base restaurants page
+  return base;
+}
+
+/**
+ * Scrape GrabFood merchants/restaurants for a given region.
+ *
+ * Flow:
+ *   1. Map regionName to a GrabFood city URL
+ *   2. Open a new tab to the GrabFood restaurants page
+ *   3. Wait for the tab to finish loading
+ *   4. Send a `startScrape` message to the content script
+ *   5. Collect results from the content script response
+ *   6. Close the tab
+ *   7. Return the merchants array
+ *
+ * @param {string} regionCode
+ * @param {string} regionName
+ * @returns {Promise<Array<Object>>}
+ */
+async function scrapeGrabFood(regionCode, regionName) {
+  const SCRAPE_TIMEOUT_MS = 180000; // 3 minutes — GrabFood loads more data via clicks
+
+  const searchUrl = buildGrabFoodUrl(regionName);
+  console.log(`[SE] Opening GrabFood restaurants: ${searchUrl}`);
+
+  let tab;
+
+  try {
+    // 1. Open a new tab
+    tab = await chrome.tabs.create({ url: searchUrl, active: false });
+
+    // 2. Wait for the tab to finish loading
+    await waitForTabLoad(tab.id);
+
+    // 3. Extra delay for NextJS hydration and SSR rendering
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // 4. Send the startScrape message and await response
+    const response = await sendMessageWithTimeout(
+      tab.id,
+      {
+        action: 'startScrape',
+        platform: 'grabfood',
+        regionCode,
+        regionName,
+      },
+      SCRAPE_TIMEOUT_MS
+    );
+
+    if (response && response.success && Array.isArray(response.merchants)) {
+      console.log(
+        `[SE] GrabFood scrape complete: ${response.merchants.length} merchants`
+      );
+      return response.merchants;
+    }
+
+    console.warn('[SE] GrabFood scrape returned no data:', response);
+    return [];
+  } catch (err) {
+    console.error('[SE] GrabFood scrape failed:', err);
+    return [];
+  } finally {
+    // 5. Close the tab regardless of outcome
+    if (tab && tab.id) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch {
+        // Tab may already be closed
+      }
+    }
+  }
 }
 
 async function scrapeGoFood(_regionCode, _regionName) {

@@ -36,6 +36,16 @@
       "matches": ["https://www.tokopedia.com/*"],
       "js": ["content-scripts/tokopedia.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://shopee.co.id/*"],
+      "js": ["content-scripts/shopee.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://food.grab.com/*"],
+      "js": ["content-scripts/grabfood.js"],
+      "run_at": "document_idle"
     }
   ],
   "icons": {
