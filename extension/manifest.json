@@ -31,7 +31,13 @@
     "service_worker": "background/service-worker.js"
   },
   "options_page": "options/options.html",
-  "content_scripts": [],
+  "content_scripts": [
+    {
+      "matches": ["https://www.tokopedia.com/*"],
+      "js": ["content-scripts/tokopedia.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

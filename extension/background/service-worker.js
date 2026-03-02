@@ -160,14 +160,214 @@ function convertToCSV(merchants) {
   return lines.join('\n');
 }
 
-// ── Platform Scraper Stubs ──────────────────────────────────
-// Each scraper returns an empty array for now.
-// Actual implementations will be added in subsequent tasks.
+// ── Tokopedia Scraper ───────────────────────────────────────
 
-async function scrapeTokopedia(_regionCode, _regionName) {
-  // TODO: Implement Tokopedia scraper
-  return [];
+/**
+ * Tokopedia city-code mapping for the `fcity` search filter.
+ * Tokopedia uses its own internal city IDs, not BPS codes. This map
+ * covers major Indonesian cities/regions. When an exact match is not
+ * found the scraper falls back to a text-based search without the
+ * fcity filter.
+ */
+const TOKOPEDIA_CITY_MAP = {
+  'Jakarta': '174,175,176,177,178,179',
+  'DKI Jakarta': '174,175,176,177,178,179',
+  'Bandung': '170',
+  'Surabaya': '267',
+  'Semarang': '224',
+  'Yogyakarta': '327',
+  'Medan': '246',
+  'Makassar': '262',
+  'Palembang': '251',
+  'Denpasar': '204',
+  'Bali': '204',
+  'Malang': '231',
+  'Bekasi': '171',
+  'Tangerang': '166',
+  'Depok': '172',
+  'Bogor': '169',
+};
+
+/**
+ * Build a Tokopedia search URL filtered by region.
+ * @param {string} regionName — human-readable region name
+ * @returns {string}
+ */
+function buildTokopediaSearchUrl(regionName) {
+  const base = 'https://www.tokopedia.com/search';
+  const params = new URLSearchParams({
+    q: '',
+    ob: '5',       // sort by newest
+    navsource: 'home',
+  });
+
+  // Try to find a matching fcity code
+  for (const [key, cityIds] of Object.entries(TOKOPEDIA_CITY_MAP)) {
+    if (regionName.toLowerCase().includes(key.toLowerCase())) {
+      params.set('fcity', cityIds);
+      break;
+    }
+  }
+
+  return `${base}?${params.toString()}`;
 }
+
+/**
+ * Scrape Tokopedia merchants for a given region.
+ *
+ * Flow:
+ *   1. Open a new tab to the Tokopedia search page filtered by region
+ *   2. Wait for the content script to be ready
+ *   3. Send a `startScrape` message to the content script
+ *   4. Await the response containing merchant data
+ *   5. Close the tab
+ *   6. Return the merchants array
+ *
+ * @param {string} regionCode
+ * @param {string} regionName
+ * @returns {Promise<Array<Object>>}
+ */
+async function scrapeTokopedia(regionCode, regionName) {
+  const SCRAPE_TIMEOUT_MS = 120000; // 2 minutes max per scrape
+
+  const searchUrl = buildTokopediaSearchUrl(regionName);
+  console.log(`[SE] Opening Tokopedia search: ${searchUrl}`);
+
+  let tab;
+
+  try {
+    // 1. Open a new tab
+    tab = await chrome.tabs.create({ url: searchUrl, active: false });
+
+    // 2. Wait for the tab to finish loading
+    await waitForTabLoad(tab.id);
+
+    // 3. Small delay to let the SPA finish rendering
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // 4. Send the startScrape message and await response
+    const response = await sendMessageWithTimeout(
+      tab.id,
+      {
+        action: 'startScrape',
+        platform: 'tokopedia',
+        regionCode,
+        regionName,
+      },
+      SCRAPE_TIMEOUT_MS
+    );
+
+    if (response && response.success && Array.isArray(response.merchants)) {
+      console.log(
+        `[SE] Tokopedia scrape complete: ${response.merchants.length} merchants`
+      );
+      return response.merchants;
+    }
+
+    console.warn('[SE] Tokopedia scrape returned no data:', response);
+    return [];
+  } catch (err) {
+    console.error('[SE] Tokopedia scrape failed:', err);
+    return [];
+  } finally {
+    // 5. Close the tab regardless of outcome
+    if (tab && tab.id) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch {
+        // Tab may already be closed
+      }
+    }
+  }
+}
+
+/**
+ * Wait for a tab to reach the "complete" loading status.
+ * @param {number} tabId
+ * @param {number} [timeoutMs=30000]
+ * @returns {Promise<void>}
+ */
+function waitForTabLoad(tabId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('Tab load timed out'));
+    }, timeoutMs);
+
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }
+
+    chrome.tabs.onUpdated.addListener(listener);
+
+    // Check immediately in case it is already loaded
+    chrome.tabs.get(tabId).then((tabInfo) => {
+      if (tabInfo.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    }).catch(() => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('Tab not found'));
+    });
+  });
+}
+
+/**
+ * Send a message to a specific tab with a timeout.
+ * Retries a few times in case the content script is not yet ready.
+ * @param {number} tabId
+ * @param {Object} message
+ * @param {number} timeoutMs
+ * @returns {Promise<Object>}
+ */
+function sendMessageWithTimeout(tabId, message, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('Message response timed out'));
+    }, timeoutMs);
+
+    let attempts = 0;
+    const maxAttempts = 3;
+    const retryDelay = 2000;
+
+    function trySend() {
+      attempts++;
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            `[SE] sendMessage attempt ${attempts} failed:`,
+            chrome.runtime.lastError.message
+          );
+
+          if (attempts < maxAttempts) {
+            setTimeout(trySend, retryDelay);
+            return;
+          }
+
+          clearTimeout(timer);
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        clearTimeout(timer);
+        resolve(response);
+      });
+    }
+
+    trySend();
+  });
+}
+
+// ── Platform Scraper Stubs ──────────────────────────────────
+// Remaining scrapers return empty arrays for now.
+// Actual implementations will be added in subsequent tasks.
 
 async function scrapeShopee(_regionCode, _regionName) {
   // TODO: Implement Shopee scraper
