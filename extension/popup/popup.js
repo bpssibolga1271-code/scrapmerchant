@@ -109,24 +109,32 @@
 
   /**
    * Fetch regions from the BPS Wilayah API with local caching.
-   * @param {'provinsi'|'kabupaten'|'kecamatan'} [level='provinsi']
+   * For provinces, call with no arguments (plain URL, no query params).
+   * For regencies/districts, pass level and parentCode.
+   * @param {'kabupaten'|'kecamatan'} [level]
    * @param {string} [parentCode='']
    * @returns {Promise<Array<{kode_bps: string, nama_bps: string}>>}
    */
-  async function fetchBpsRegions(level = 'provinsi', parentCode = '') {
-    const cacheKey = `${level}_${parentCode}`;
+  async function fetchBpsRegions(level, parentCode = '') {
+    const cacheKey = level ? `${level}_${parentCode}` : 'provinsi';
     const cache = (await StorageHelper.get(STORAGE_KEYS.regionsCache)) || {};
 
     if (cache[cacheKey]) {
       return cache[cacheKey];
     }
 
-    const params = new URLSearchParams({ level });
-    if (parentCode) {
-      params.set('parent', parentCode);
-    }
+    let url;
 
-    const url = `${BPS_API_BASE}?${params.toString()}`;
+    if (level) {
+      const params = new URLSearchParams({ level });
+      if (parentCode) {
+        params.set('parent', parentCode);
+      }
+      url = `${BPS_API_BASE}?${params.toString()}`;
+    } else {
+      // Provinces: plain URL with no query params per BPS API docs
+      url = BPS_API_BASE;
+    }
 
     try {
       const response = await fetch(url);
@@ -141,8 +149,8 @@
 
       return data;
     } catch (err) {
-      console.error(`Failed to fetch regions (${level}, ${parentCode}):`, err);
-      return [];
+      console.error(`Failed to fetch regions (${level || 'provinsi'}, ${parentCode}):`, err);
+      throw err;
     }
   }
 
@@ -150,8 +158,14 @@
 
   async function loadProvinces() {
     selectProvince.disabled = true;
-    const provinces = await fetchBpsRegions('provinsi');
-    populateSelect(selectProvince, provinces);
+    try {
+      const provinces = await fetchBpsRegions();
+      populateSelect(selectProvince, provinces);
+    } catch {
+      clearSelect(selectProvince);
+      selectProvince.options[0].textContent = 'Gagal memuat data';
+      selectProvince.disabled = true;
+    }
   }
 
   async function loadRegencies(provinceCode) {
@@ -161,8 +175,14 @@
     if (!provinceCode) return;
 
     selectRegency.disabled = true;
-    const regencies = await fetchBpsRegions('kabupaten', provinceCode);
-    populateSelect(selectRegency, regencies);
+    try {
+      const regencies = await fetchBpsRegions('kabupaten', provinceCode);
+      populateSelect(selectRegency, regencies);
+    } catch {
+      clearSelect(selectRegency);
+      selectRegency.options[0].textContent = 'Gagal memuat data';
+      selectRegency.disabled = true;
+    }
   }
 
   async function loadDistricts(regencyCode) {
@@ -171,8 +191,14 @@
     if (!regencyCode) return;
 
     selectDistrict.disabled = true;
-    const districts = await fetchBpsRegions('kecamatan', regencyCode);
-    populateSelect(selectDistrict, districts);
+    try {
+      const districts = await fetchBpsRegions('kecamatan', regencyCode);
+      populateSelect(selectDistrict, districts);
+    } catch {
+      clearSelect(selectDistrict);
+      selectDistrict.options[0].textContent = 'Gagal memuat data';
+      selectDistrict.disabled = true;
+    }
   }
 
   // ── Platform Rendering ──────────────────────────────────────

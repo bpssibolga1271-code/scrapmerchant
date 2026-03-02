@@ -27,7 +27,9 @@ const StorageHelper = {
   },
 
   /**
-   * Append merchants for a given platform and region code.
+   * Store merchants for a given platform and region code.
+   * Replaces any existing data for the same platform+regionCode
+   * combination to prevent duplicates on re-scrape.
    * Data is stored as: { scraped_data: { [platform]: { [regionCode]: [...merchants] } } }
    * @param {string} platform
    * @param {string} regionCode
@@ -41,11 +43,7 @@ const StorageHelper = {
       data[platform] = {};
     }
 
-    if (!data[platform][regionCode]) {
-      data[platform][regionCode] = [];
-    }
-
-    data[platform][regionCode] = data[platform][regionCode].concat(merchants);
+    data[platform][regionCode] = merchants;
 
     await this.set(STORAGE_KEYS.scrapedData, data);
   },

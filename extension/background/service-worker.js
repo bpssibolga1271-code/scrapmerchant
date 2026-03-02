@@ -120,6 +120,8 @@ async function handleExport({ format, merchants }) {
       saveAs: true,
     });
 
+    URL.revokeObjectURL(url);
+
     return { success: true };
   } catch (err) {
     console.error(`[SE] Export failed (${format}):`, err);

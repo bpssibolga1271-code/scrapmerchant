@@ -76,11 +76,12 @@
     try {
       const response = await fetch(apiUrl, {
         method: 'HEAD',
-        mode: 'no-cors',
       });
 
-      // With no-cors, we can't read the status, but if fetch doesn't throw
-      // it means the server is reachable.
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       showStatus('Koneksi berhasil! Server dapat dijangkau.', 'success');
     } catch (err) {
       showStatus(`Koneksi gagal: ${err.message}`, 'error');
