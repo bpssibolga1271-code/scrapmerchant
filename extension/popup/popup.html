@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SE Merchant Scraper</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <h1 class="header__title">SE Merchant Scraper</h1>
+    <p class="header__subtitle">Sensus Ekonomi &mdash; Data Collection</p>
+  </header>
+
+  <!-- Region Filter -->
+  <section class="section" id="region-section">
+    <h2 class="section__title">Wilayah</h2>
+
+    <div class="form-group">
+      <label for="select-province">Provinsi</label>
+      <select id="select-province" disabled>
+        <option value="">— Pilih Provinsi —</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="select-regency">Kabupaten / Kota</label>
+      <select id="select-regency" disabled>
+        <option value="">— Pilih Kab/Kota —</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="select-district">Kecamatan</label>
+      <select id="select-district" disabled>
+        <option value="">— Pilih Kecamatan —</option>
+      </select>
+    </div>
+  </section>
+
+  <!-- Platform Selection -->
+  <section class="section" id="platform-section">
+    <h2 class="section__title">Platform</h2>
+    <div class="platform-grid" id="platform-grid">
+      <!-- Populated by popup.js -->
+    </div>
+  </section>
+
+  <!-- Actions -->
+  <section class="section" id="action-section">
+    <button class="btn btn--primary btn--block" id="btn-start" disabled>
+      Mulai Scraping
+    </button>
+  </section>
+
+  <!-- Progress -->
+  <section class="section hidden" id="progress-section">
+    <h2 class="section__title">Progress</h2>
+    <div class="progress">
+      <div class="progress__bar" id="progress-bar"></div>
+    </div>
+    <p class="progress__label" id="progress-label">Memulai...</p>
+  </section>
+
+  <!-- Results -->
+  <section class="section hidden" id="results-section">
+    <h2 class="section__title">Hasil</h2>
+    <div id="results-summary"></div>
+  </section>
+
+  <!-- Export -->
+  <section class="section hidden" id="export-section">
+    <h2 class="section__title">Ekspor Data</h2>
+    <div class="export-grid">
+      <button class="btn btn--export" data-format="excel">Excel</button>
+      <button class="btn btn--export" data-format="csv">CSV</button>
+      <button class="btn btn--export" data-format="json">JSON</button>
+    </div>
+    <button class="btn btn--secondary btn--block" id="btn-submit" style="margin-top: 8px;">
+      Kirim ke Server
+    </button>
+  </section>
+
+  <script src="../lib/constants.js"></script>
+  <script src="../lib/storage.js"></script>
+  <script src="../lib/xlsx.full.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
