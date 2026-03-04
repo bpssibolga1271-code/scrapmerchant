@@ -337,18 +337,86 @@
   // ── Export ──────────────────────────────────────────────────
 
   /**
+   * Export scraped data as a proper .xlsx Excel file using SheetJS.
+   * Creates one worksheet per platform plus a combined "Semua Platform" sheet.
+   * @param {Array<Object>} merchants — flat array of all merchant objects
+   */
+  function exportExcel(merchants) {
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const filename = `se-merchants-${timestamp}.xlsx`;
+
+    const wb = XLSX.utils.book_new();
+
+    // Group merchants by platform
+    const byPlatform = {};
+    for (const m of merchants) {
+      const key = m.platform || 'unknown';
+      if (!byPlatform[key]) {
+        byPlatform[key] = [];
+      }
+      byPlatform[key].push(m);
+    }
+
+    // Create a worksheet for each platform
+    for (const [platform, items] of Object.entries(byPlatform)) {
+      const sheetData = items.map((m) => {
+        const row = {};
+        for (const field of MERCHANT_FIELDS) {
+          row[field] = m[field] ?? '';
+        }
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(sheetData, {
+        header: MERCHANT_FIELDS,
+      });
+      const sheetName = PLATFORMS[platform]?.name || platform;
+      XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    }
+
+    // Create a combined "Semua Platform" sheet with all merchants
+    const allData = merchants.map((m) => {
+      const row = {};
+      for (const field of MERCHANT_FIELDS) {
+        row[field] = m[field] ?? '';
+      }
+      return row;
+    });
+
+    const wsAll = XLSX.utils.json_to_sheet(allData, {
+      header: MERCHANT_FIELDS,
+    });
+    XLSX.utils.book_append_sheet(wb, wsAll, 'Semua Platform');
+
+    // Trigger download
+    XLSX.writeFile(wb, filename);
+  }
+
+  /**
    * Export scraped data in the requested format.
+   * Excel is handled directly in the popup via SheetJS.
+   * CSV and JSON are delegated to the service worker.
    * @param {'excel'|'csv'|'json'} format
    */
   async function exportData(format) {
     const merchants = await StorageHelper.getMerchants();
 
+    if (!merchants || !merchants.length) {
+      alert('Tidak ada data untuk diekspor.');
+      return;
+    }
+
     try {
-      await chrome.runtime.sendMessage({
-        action: 'export',
-        format,
-        merchants,
-      });
+      if (format === 'excel' && typeof XLSX !== 'undefined') {
+        exportExcel(merchants);
+      } else {
+        // Delegate to service worker for CSV, JSON, or Excel fallback
+        await chrome.runtime.sendMessage({
+          action: 'export',
+          format,
+          merchants,
+        });
+      }
     } catch (err) {
       console.error(`Export error (${format}):`, err);
     }
