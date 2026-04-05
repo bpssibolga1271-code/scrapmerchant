@@ -1,0 +1,78 @@
+{
+  "manifest_version": 3,
+  "name": "SE Merchant Scraper",
+  "version": "1.0.0",
+  "description": "Sensus Ekonomi — Merchant data collection from Indonesian e-commerce platforms",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "downloads",
+    "scripting",
+    "debugger"
+  ],
+  "host_permissions": [
+    "https://sig.bps.go.id/*",
+    "https://*.tokopedia.com/*",
+    "https://*.shopee.co.id/*",
+    "https://food.grab.com/*",
+    "https://portal.grab.com/*",
+    "https://*.gofood.co.id/*",
+    "https://*.lazada.co.id/*",
+    "https://*.blibli.com/*",
+    "http://localhost/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.tokopedia.com/*"],
+      "js": ["content-scripts/tokopedia.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://shopee.co.id/*"],
+      "js": ["content-scripts/shopee.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://food.grab.com/*"],
+      "js": ["content-scripts/grabfood-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://food.grab.com/*"],
+      "js": ["content-scripts/grabfood.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gofood.co.id/*", "https://*.gofood.co.id/*"],
+      "js": ["content-scripts/gofood.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lazada.co.id/*", "https://*.lazada.co.id/*"],
+      "js": ["content-scripts/lazada.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.blibli.com/*", "https://blibli.com/*"],
+      "js": ["content-scripts/blibli.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

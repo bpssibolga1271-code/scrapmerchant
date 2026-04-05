@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum RegionLevel {
+  province
+  regency
+  district
+}
+
+enum Platform {
+  tokopedia
+  shopee
+  grabfood
+  gofood
+  lazada
+  blibli
+}
+
+enum ScrapeStatus {
+  running
+  completed
+  failed
+}
+
+enum UserRole {
+  admin
+  staff
+}
+
+model Region {
+  id        Int         @id @default(autoincrement())
+  code      String      @unique
+  name      String
+  level     RegionLevel
+  parentId  Int?
+  parent    Region?     @relation("RegionHierarchy", fields: [parentId], references: [id])
+  children  Region[]    @relation("RegionHierarchy")
+  sessions  ScrapeSession[]
+
+  @@index([code, level])
+  @@index([parentId])
+}
+
+// Merchant data is now stored in Parquet files (see src/lib/parquet.ts)
+// No longer using Prisma for merchant storage.
+
+model ScrapeSession {
+  id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id])
+  regionId       Int
+  region         Region       @relation(fields: [regionId], references: [id])
+  platform       Platform
+  totalMerchants Int          @default(0)
+  status         ScrapeStatus @default(running)
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+
+  @@index([userId])
+  @@index([regionId])
+}
+
+model User {
+  id           Int             @id @default(autoincrement())
+  name         String
+  email        String          @unique
+  passwordHash String
+  role         UserRole        @default(staff)
+  createdAt    DateTime        @default(now())
+  sessions     ScrapeSession[]
+}
