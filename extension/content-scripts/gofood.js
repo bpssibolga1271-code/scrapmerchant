@@ -16,6 +16,7 @@
   const PAGE_LOAD_TIMEOUT_MS = 15000;
   const MAX_SCROLL_ATTEMPTS = 40;
   const SCROLL_IDLE_WAIT_MS = 2000;
+  const MAX_LOAD_MORE_CLICKS = 50;
 
   // -- Selectors & Patterns -------------------------------------------------
 
@@ -98,6 +99,219 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // -- GoFood Outlets API ---------------------------------------------------
+
+  /**
+   * Map province codes to Indonesian timezone identifiers.
+   * WIB (UTC+7): Sumatra, Java, West/Central Kalimantan
+   * WITA (UTC+8): East/South/North Kalimantan, Bali, NTB, NTT, Sulawesi
+   * WIT (UTC+9): Papua, Maluku
+   */
+  function getTimezoneForProvince(provinceCode) {
+    const code = String(provinceCode).substring(0, 2);
+    const WITA = ['63', '64', '65', '51', '52', '53', '71', '72', '73', '74', '75', '76'];
+    const WIT = ['81', '82', '91', '92', '93', '94'];
+    if (WIT.includes(code)) return 'Asia/Jayapura';
+    if (WITA.includes(code)) return 'Asia/Makassar';
+    return 'Asia/Jakarta';
+  }
+
+  /**
+   * Fetch restaurant outlets from GoFood's /api/outlets endpoint.
+   * Paginates through all results using pageToken.
+   *
+   * @param {number} latitude
+   * @param {number} longitude
+   * @param {string} regionCode
+   * @param {string} regionName
+   * @param {Object} region - Full region object with province data
+   * @returns {Promise<Map<string, Object>>} merchantUrl → merchant data
+   */
+  async function fetchOutletsFromAPI(latitude, longitude, regionCode, regionName, region) {
+    const merchantMap = new Map();
+    const timezone = getTimezoneForProvince(region?.province?.code || regionCode);
+    let pageToken = '';
+    let totalFetched = 0;
+    const MAX_PAGES = 50;
+
+    console.log(
+      `[SE-GoFood] Fetching outlets API: lat=${latitude}, lng=${longitude}, tz=${timezone}`
+    );
+
+    for (let page = 0; page < MAX_PAGES; page++) {
+      try {
+        const payload = {
+          code: 'MOST_LOVED',
+          location: { latitude, longitude },
+          pageSize: 12,
+          language: 'en',
+          timezone,
+          country_code: 'ID',
+        };
+
+        if (pageToken) {
+          payload.pageToken = pageToken;
+        }
+
+        const resp = await fetch('https://gofood.co.id/api/outlets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!resp.ok) {
+          console.warn(`[SE-GoFood] API returned ${resp.status} on page ${page}`);
+          break;
+        }
+
+        const data = await resp.json();
+        const outlets = data.outlets || data.data?.outlets || [];
+
+        if (outlets.length === 0) {
+          console.log(`[SE-GoFood] No more outlets on page ${page}, stopping.`);
+          break;
+        }
+
+        for (const outlet of outlets) {
+          // GoFood API nests data under outlet.core, outlet.ratings, etc.
+          const core = outlet.core || {};
+          const ratingsData = outlet.ratings || {};
+
+          const name = core.displayName || '';
+          const id = outlet.uid || core.uid || '';
+          const lat = core.location?.latitude || null;
+          const lng = core.location?.longitude || null;
+
+          // Extract cuisines from core.tags (taxonomy=2 is cuisine)
+          const tags = core.tags || [];
+          const cuisines = tags
+            .filter((t) => t.taxonomy === 2)
+            .map((t) => t.displayName)
+            .filter(Boolean);
+
+          const rating = ratingsData.average || null;
+          const totalReviews = ratingsData.total || null;
+
+          // Build URL from name + id (GoFood slug format)
+          const slugName = name
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-');
+          const merchantUrl = id
+            ? `https://gofood.co.id/en/restaurant/${slugName}-${id}`
+            : '';
+
+          if (!name || !id) continue;
+
+          const key = merchantUrl || `${name}|${id}`;
+          if (!merchantMap.has(key)) {
+            merchantMap.set(key, {
+              platform: 'gofood',
+              merchantName: name,
+              merchantUrl,
+              merchantId: String(id),
+              address: '',
+              latitude: lat,
+              longitude: lng,
+              provinceCode: regionCode,
+              provinceName: regionName,
+              regencyCode: region?.regency?.code || '',
+              regencyName: region?.regency?.name || '',
+              districtCode: region?.district?.code || '',
+              districtName: region?.district?.name || '',
+              category: cuisines.join(', '),
+              rating: rating ? parseFloat(rating) : null,
+              totalProducts: null,
+              totalSold: totalReviews,
+              joinDate: core.createTime || '',
+              isOfficialStore: false,
+              phone: '',
+              description: '',
+              scrapedAt: new Date().toISOString(),
+            });
+          }
+        }
+
+        totalFetched += outlets.length;
+        console.log(
+          `[SE-GoFood] API page ${page}: ${outlets.length} outlets (total: ${merchantMap.size})`
+        );
+
+        // Get next page token
+        pageToken = data.next_page_token || data.nextPageToken || '';
+        if (!pageToken) {
+          console.log('[SE-GoFood] No more pages (no next_page_token).');
+          break;
+        }
+
+        // Rate limit
+        await sleep(300);
+      } catch (err) {
+        console.warn(`[SE-GoFood] API fetch error on page ${page}:`, err.message);
+        break;
+      }
+    }
+
+    console.log(
+      `[SE-GoFood] API complete: ${merchantMap.size} unique outlets from ${totalFetched} total.`
+    );
+    return merchantMap;
+  }
+
+  /**
+   * Detect if a CAPTCHA, verification dialog, or blocking overlay is present.
+   * @returns {boolean}
+   */
+  function detectCaptcha() {
+    // Check URL for captcha/verify paths
+    const url = window.location.href.toLowerCase();
+    if (url.includes('/verify') || url.includes('/captcha')) return true;
+
+    // Check for captcha-related elements
+    const captchaSelectors = [
+      '[class*="captcha"]', '[id*="captcha"]',
+      '[class*="verify"]', '[id*="verify"]',
+      '[class*="challenge"]', '[id*="challenge"]',
+      '[class*="recaptcha"]', '[id*="recaptcha"]',
+      'iframe[src*="captcha"]', 'iframe[src*="recaptcha"]',
+    ];
+    for (const sel of captchaSelectors) {
+      if (document.querySelector(sel)) return true;
+    }
+
+    // Check for text indicators in modals/dialogs
+    const modals = document.querySelectorAll('[role="dialog"], [class*="modal"], [class*="overlay"]');
+    for (const modal of modals) {
+      const text = modal.textContent.toLowerCase();
+      if (text.includes('captcha') || text.includes('verifikasi') || text.includes('robot')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Wait for the user to solve a CAPTCHA. Polls every 3 seconds until resolved.
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    console.log('[SE-GoFood] CAPTCHA/dialog detected — waiting for user to solve it...');
+    try {
+      chrome.runtime.sendMessage({ action: 'captchaDetected', platform: 'gofood' });
+    } catch (e) { /* ignore */ }
+
+    while (detectCaptcha()) {
+      await sleep(3000);
+    }
+
+    console.log('[SE-GoFood] CAPTCHA resolved, resuming...');
+    try {
+      chrome.runtime.sendMessage({ action: 'captchaResolved', platform: 'gofood' });
+    } catch (e) { /* ignore */ }
+    await sleep(1000);
+  }
+
   /**
    * Auto-scroll to the bottom of the page in steps to trigger
    * infinite-scroll / lazy-loading of additional restaurant cards.
@@ -128,6 +342,84 @@
 
     // Final wait for any trailing lazy renders
     await sleep(SCROLL_IDLE_WAIT_MS);
+  }
+
+  /**
+   * Find and click "Load More" / "See More" / "Lihat Lebih Banyak" buttons
+   * on the /most_loved listing page to load additional restaurants.
+   * @returns {Promise<number>} Number of buttons clicked
+   */
+  async function clickLoadMoreButtons() {
+    const loadMorePatterns = [
+      /load\s*more/i,
+      /see\s*more/i,
+      /view\s*more/i,
+      /lihat\s*lebih/i,
+      /lihat\s*semua/i,
+      /muat\s*lebih/i,
+      /selengkapnya/i,
+      /show\s*more/i,
+    ];
+
+    const classPatterns = [
+      '[class*="load-more"]',
+      '[class*="loadMore"]',
+      '[class*="see-more"]',
+      '[class*="seeMore"]',
+      '[class*="view-more"]',
+      '[class*="viewMore"]',
+      '[class*="show-more"]',
+      '[class*="showMore"]',
+    ];
+
+    let clickedCount = 0;
+
+    // Strategy 1: Find buttons/links by text content
+    const clickables = document.querySelectorAll('button, a, [role="button"], span[tabindex], div[tabindex], div[onclick]');
+    for (const el of clickables) {
+      const text = el.textContent.trim();
+      if (!text || text.length > 60) continue;
+      // Skip if not visible
+      if (el.offsetParent === null && el.offsetHeight === 0) continue;
+      for (const pattern of loadMorePatterns) {
+        if (pattern.test(text)) {
+          try {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await sleep(500);
+            el.click();
+            clickedCount++;
+            console.log(`[SE-GoFood] Clicked load-more button: "${text}"`);
+            await sleep(2000); // Wait for content to load
+          } catch (e) {
+            console.warn('[SE-GoFood] Failed to click load-more button:', e);
+          }
+          break;
+        }
+      }
+    }
+
+    // Strategy 2: Find elements by class patterns
+    if (clickedCount === 0) {
+      for (const selector of classPatterns) {
+        const els = document.querySelectorAll(selector);
+        for (const el of els) {
+          if (el.offsetParent === null && el.offsetHeight === 0) continue;
+          try {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            await sleep(500);
+            el.click();
+            clickedCount++;
+            console.log(`[SE-GoFood] Clicked load-more element: ${selector}`);
+            await sleep(2000);
+          } catch (e) {
+            console.warn('[SE-GoFood] Failed to click load-more element:', e);
+          }
+        }
+        if (clickedCount > 0) break;
+      }
+    }
+
+    return clickedCount;
   }
 
   // -- Extraction Logic -----------------------------------------------------
@@ -166,11 +458,19 @@
 
   /**
    * Extract the restaurant name from a card element.
+   * GoFood card structure: first <p> is the restaurant name.
    * @param {Element} card
    * @returns {string}
    */
   function extractName(card) {
-    // Try heading elements first
+    // Primary: first <p> element is the restaurant name in GoFood cards
+    const firstP = card.querySelector('p');
+    if (firstP) {
+      const text = firstP.textContent.trim();
+      if (text && text.length > 1 && text.length < 150) return text;
+    }
+
+    // Try heading elements
     const heading =
       card.querySelector('h3') ||
       card.querySelector('h2') ||
@@ -181,23 +481,6 @@
     if (heading) {
       const text = heading.textContent.trim();
       if (text) return text;
-    }
-
-    // Fallback: use the first significant text node
-    const textEls = card.querySelectorAll('span, p, div');
-    for (const el of textEls) {
-      const text = el.textContent.trim();
-      // Skip very short or obviously non-name text
-      if (
-        text.length > 2 &&
-        text.length < 100 &&
-        !text.includes('km') &&
-        !text.match(/^\d/) &&
-        !text.includes('Rp') &&
-        !text.includes('min')
-      ) {
-        return text;
-      }
     }
 
     // Last resort: aria-label or title attribute
@@ -264,12 +547,19 @@
 
   /**
    * Extract cuisine / category info from a card.
-   * GoFood typically shows cuisine types like "Aneka Nasi", "Minuman", etc.
+   * GoFood card structure: second <p> is the category/cuisine.
    * @param {Element} card
    * @returns {string}
    */
   function extractCuisine(card) {
-    // Look for elements with cuisine/category-related classes
+    // Primary: second <p> element is the category in GoFood cards
+    const allPs = card.querySelectorAll('p');
+    if (allPs.length >= 2) {
+      const text = allPs[1].textContent.trim();
+      if (text && text.length > 1 && text.length < 100) return text;
+    }
+
+    // Fallback: look for elements with cuisine/category-related classes
     const cuisineEl =
       card.querySelector('[class*="cuisine"]') ||
       card.querySelector('[class*="category"]') ||
@@ -277,30 +567,6 @@
 
     if (cuisineEl) {
       return cuisineEl.textContent.trim();
-    }
-
-    // Heuristic: cuisine text is often a smaller/secondary text element
-    // after the restaurant name, before rating/distance info
-    const spans = card.querySelectorAll('span, p');
-    for (const span of spans) {
-      const text = span.textContent.trim();
-      // Cuisine labels are typically short, no numbers, no currency
-      if (
-        text.length > 2 &&
-        text.length < 60 &&
-        !text.includes('km') &&
-        !text.includes('min') &&
-        !text.includes('Rp') &&
-        !text.match(/^\d/) &&
-        !text.match(/rating/i) &&
-        text !== extractName(card)
-      ) {
-        // Check parent isn't a heading (which we use for name)
-        const parent = span.closest('h2, h3, h4');
-        if (!parent) {
-          return text;
-        }
-      }
     }
 
     return '';
@@ -376,30 +642,29 @@
 
   /**
    * Extract address / location text from a card.
-   * GoFood cards often show distance ("1.2 km") rather than a full address.
-   * We capture whatever location-related text is available.
+   * GoFood listing cards do NOT have street addresses — only distance.
+   * We only capture actual address text (Jl./Jalan), never distance.
    * @param {Element} card
    * @returns {string}
    */
   function extractAddress(card) {
-    const addrEl =
-      card.querySelector('[class*="address"]') ||
-      card.querySelector('[class*="location"]') ||
-      card.querySelector('[class*="distance"]');
+    const name = extractName(card);
 
-    if (addrEl) {
-      return addrEl.textContent.trim();
-    }
-
-    // Look for distance text like "1.2 km"
+    // Only look for actual street address text (Jl. / Jalan)
     const allEls = card.querySelectorAll('span, p, div');
     for (const el of allEls) {
+      if (el.children.length > 0) continue;
       const text = el.textContent.trim();
-      if (text.match(/[\d.]+\s*km/i)) {
+      if (
+        text.length < 150 &&
+        (text.match(/\bJl\b\.?/i) || text.match(/\bJalan\b/i)) &&
+        (!name || !text.includes(name))
+      ) {
         return text;
       }
     }
 
+    // GoFood listing pages only show distance, NOT address — return empty
     return '';
   }
 
@@ -432,46 +697,77 @@
    * @param {Map<string, Object>} merchantMap
    * @param {string} regionCode
    * @param {string} regionName
+   * @param {Object} region — full region hierarchy from popup
    */
-  function collectRestaurants(merchantMap, regionCode, regionName) {
+  /**
+   * Parse a GoFood restaurant name into name + address parts.
+   * GoFood names often follow "Name, Location" format, e.g.:
+   *   "CFC, RSUD Undata Palu" → name: "CFC", address: "RSUD Undata Palu"
+   *   "Rm Padang Cabe Hijau, Tondo" → name: "Rm Padang Cabe Hijau", address: "Tondo"
+   * @param {string} fullName
+   * @returns {{ name: string, locationHint: string }}
+   */
+  function parseGoFoodName(fullName) {
+    const lastComma = fullName.lastIndexOf(',');
+    if (lastComma > 0 && lastComma < fullName.length - 1) {
+      const name = fullName.substring(0, lastComma).trim();
+      const locationHint = fullName.substring(lastComma + 1).trim();
+      // Only split if the part after comma looks like a location (not a number/price)
+      if (locationHint.length > 1 && !/^\d/.test(locationHint)) {
+        return { name, locationHint };
+      }
+    }
+    return { name: fullName, locationHint: '' };
+  }
+
+  function collectRestaurants(merchantMap, regionCode, regionName, region) {
     const cards = findRestaurantCards();
 
     for (const card of cards) {
-      const name = extractName(card);
-      if (!name) continue;
+      const rawName = extractName(card);
+      if (!rawName) continue;
 
       const url = extractUrl(card);
       // Deduplicate by name + URL composite key
-      const dedupKey = `${name.toLowerCase()}|${url}`;
+      const dedupKey = `${rawName.toLowerCase()}|${url}`;
 
       if (merchantMap.has(dedupKey)) continue;
 
       const merchantId = extractMerchantId(url);
       const cuisine = extractCuisine(card);
       const rating = extractRating(card);
-      const address = extractAddress(card);
+      const streetAddress = extractAddress(card);
       const imageUrl = extractImageUrl(card);
 
+      // Parse "Name, Location" format from GoFood names
+      const parsed = parseGoFoodName(rawName);
+      // Use street address if found, otherwise use location hint from name
+      const address = streetAddress || parsed.locationHint;
+
+      // Check if API already has this merchant (merge lat/lng)
+      const existing = merchantMap.get(dedupKey);
       merchantMap.set(dedupKey, {
         platform: 'gofood',
-        merchantName: name,
+        merchantName: parsed.name,
         merchantUrl: url,
         merchantId: merchantId,
         address: address,
-        provinceCode: regionCode,
-        provinceName: regionName,
-        regencyCode: '',
-        regencyName: '',
-        districtCode: '',
-        districtName: '',
-        category: cuisine,
-        rating: rating,
+        latitude: existing?.latitude || null,
+        longitude: existing?.longitude || null,
+        provinceCode: region?.province?.code || regionCode,
+        provinceName: region?.province?.name || regionName,
+        regencyCode: region?.regency?.code || '',
+        regencyName: region?.regency?.name || '',
+        districtCode: region?.district?.code || '',
+        districtName: region?.district?.name || '',
+        category: cuisine || existing?.category || '',
+        rating: rating || existing?.rating || null,
         totalProducts: null,
-        totalSold: null,
+        totalSold: existing?.totalSold || null,
         joinDate: '',
         isOfficialStore: false,
         phone: '',
-        description: imageUrl ? `image:${imageUrl}` : '',
+        description: '',
         scrapedAt: new Date().toISOString(),
       });
     }
@@ -484,8 +780,60 @@
    * @param {string} regionName
    * @returns {Promise<Object[]>}
    */
-  async function scrapeRestaurants(regionCode, regionName) {
+  /**
+   * Dismiss cookie consent banners or overlays that may block interaction.
+   */
+  async function dismissCookieBanner() {
+    const bannerSelectors = [
+      '[class*="cookie"] button',
+      '[class*="Cookie"] button',
+      '[class*="consent"] button',
+      '[id*="cookie"] button',
+      '[id*="consent"] button',
+      'button[class*="accept"]',
+      'button[class*="Accept"]',
+      '[class*="banner"] button[class*="close"]',
+      '[class*="overlay"] button[class*="close"]',
+    ];
+
+    const acceptPatterns = [/accept/i, /terima/i, /ok/i, /got\s*it/i, /agree/i, /setuju/i];
+
+    for (const sel of bannerSelectors) {
+      const buttons = document.querySelectorAll(sel);
+      for (const btn of buttons) {
+        const text = btn.textContent.trim();
+        for (const pattern of acceptPatterns) {
+          if (pattern.test(text) || text.length < 4) {
+            try {
+              btn.click();
+              console.log(`[SE-GoFood] Dismissed cookie banner: "${text}"`);
+              await sleep(500);
+              return;
+            } catch (e) { /* ignore */ }
+          }
+        }
+      }
+    }
+  }
+
+  async function scrapeRestaurants(regionCode, regionName, region, coords) {
     const merchantMap = new Map();
+
+    // ── Phase 0: API-based collection ───────────────────────
+    // If coordinates are available, fetch outlets directly from the API.
+    // This provides lat/lng, rating, and address for each outlet.
+    if (coords && coords.lat && coords.lng) {
+      console.log('[SE-GoFood] Phase 0: Fetching outlets from API...');
+      const apiMerchants = await fetchOutletsFromAPI(
+        coords.lat, coords.lng, regionCode, regionName, region
+      );
+      for (const [key, merchant] of apiMerchants) {
+        merchantMap.set(key, merchant);
+      }
+      console.log(
+        `[SE-GoFood] Phase 0 complete: ${merchantMap.size} outlets from API.`
+      );
+    }
 
     console.log('[SE-GoFood] Waiting for restaurant listings to load...');
 
@@ -493,6 +841,11 @@
     const container = await waitForAnyElement(SELECTORS.listingContainer);
 
     if (!container) {
+      // If we got API results, return those even without DOM
+      if (merchantMap.size > 0) {
+        console.log('[SE-GoFood] No DOM container but have API data, returning API results.');
+        return Array.from(merchantMap.values());
+      }
       console.warn('[SE-GoFood] Listing container not found.');
       return [];
     }
@@ -500,21 +853,73 @@
     // Give the page extra time to render initial cards
     await sleep(2000);
 
+    // Dismiss cookie consent banner if present
+    await dismissCookieBanner();
+
+    // Check for CAPTCHA before starting
+    if (detectCaptcha()) {
+      await waitForCaptchaResolution();
+    }
+
     // Collect initial restaurants before scrolling
-    collectRestaurants(merchantMap, regionCode, regionName);
+    collectRestaurants(merchantMap, regionCode, regionName, region);
     console.log(
       `[SE-GoFood] Initial collection: ${merchantMap.size} restaurants`
     );
 
-    // Auto-scroll to load more restaurants
-    console.log('[SE-GoFood] Auto-scrolling to load more...');
+    // Phase 1: Scroll down and click load-more buttons
+    console.log('[SE-GoFood] Phase 1: Scrolling and clicking load-more...');
+    let loadMoreClicks = 0;
+    let consecutiveNoButton = 0;
+
+    while (loadMoreClicks < MAX_LOAD_MORE_CLICKS && consecutiveNoButton < 5) {
+      if (detectCaptcha()) await waitForCaptchaResolution();
+
+      // Scroll to bottom first — button only appears after scrolling down
+      await autoScroll();
+      await sleep(2000);
+
+      // Extra scroll to ensure the load-more button is in viewport
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+      await sleep(1500);
+
+      // Collect any newly visible restaurants
+      collectRestaurants(merchantMap, regionCode, regionName, region);
+
+      const clicked = await clickLoadMoreButtons();
+      if (clicked > 0) {
+        loadMoreClicks += clicked;
+        consecutiveNoButton = 0;
+        console.log(`[SE-GoFood] Load-more click #${loadMoreClicks}, waiting for content...`);
+        await sleep(3000);
+        collectRestaurants(merchantMap, regionCode, regionName, region);
+        console.log(`[SE-GoFood] After load-more: ${merchantMap.size} restaurants`);
+      } else {
+        consecutiveNoButton++;
+        await sleep(1500);
+      }
+    }
+
+    console.log(`[SE-GoFood] Phase 1 done: ${loadMoreClicks} load-more clicks, ${merchantMap.size} restaurants`);
+
+    // Phase 2: Auto-scroll for infinite scroll pages
+    console.log('[SE-GoFood] Phase 2: Auto-scrolling for infinite scroll...');
     let previousCount = merchantMap.size;
     let scrollRounds = 0;
-    const MAX_SCROLL_ROUNDS = 10;
+    const MAX_SCROLL_ROUNDS = 20;
+    let consecutiveNoChange = 0;
 
     while (scrollRounds < MAX_SCROLL_ROUNDS) {
+      if (detectCaptcha()) await waitForCaptchaResolution();
+
       await autoScroll();
-      collectRestaurants(merchantMap, regionCode, regionName);
+      await sleep(1000);
+
+      // Try clicking load-more again in case new ones appeared
+      await clickLoadMoreButtons();
+      await sleep(1000);
+
+      collectRestaurants(merchantMap, regionCode, regionName, region);
 
       const newCount = merchantMap.size;
       console.log(
@@ -522,17 +927,24 @@
       );
 
       if (newCount === previousCount) {
-        // No new restaurants found after scrolling — we are done
-        console.log('[SE-GoFood] No new restaurants after scroll, stopping.');
-        break;
+        consecutiveNoChange++;
+        if (consecutiveNoChange >= 3) {
+          console.log('[SE-GoFood] No new restaurants after 3 rounds, stopping.');
+          break;
+        }
+      } else {
+        consecutiveNoChange = 0;
       }
 
       previousCount = newCount;
       scrollRounds++;
     }
 
+    const allMerchants = Array.from(merchantMap.values());
+    const withCoords = allMerchants.filter((m) => m.latitude != null);
     console.log(
-      `[SE-GoFood] Scraping complete. Total unique restaurants: ${merchantMap.size}`
+      `[SE-GoFood] Scraping complete. Total: ${allMerchants.length} restaurants ` +
+      `(${withCoords.length} with lat/lng)`
     );
 
     return Array.from(merchantMap.values());
@@ -545,13 +957,14 @@
       return false;
     }
 
-    const { regionCode, regionName } = message;
+    const { regionCode, regionName, region, coords } = message;
 
     console.log(
-      `[SE-GoFood] Received startScrape for region ${regionCode} (${regionName})`
+      `[SE-GoFood] Received startScrape for region ${regionCode} (${regionName})` +
+      (coords ? ` with coords (${coords.lat}, ${coords.lng})` : '')
     );
 
-    scrapeRestaurants(regionCode, regionName)
+    scrapeRestaurants(regionCode, regionName, region, coords)
       .then((merchants) => {
         sendResponse({ success: true, merchants });
       })

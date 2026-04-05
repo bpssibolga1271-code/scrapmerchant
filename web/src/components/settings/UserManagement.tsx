@@ -1,6 +1,13 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface User {
   id: number;
@@ -172,7 +179,7 @@ export default function UserManagement() {
                 htmlFor="name"
                 className="block text-sm font-medium text-gray-700"
               >
-                Name
+                Nama
               </label>
               <input
                 id="name"
@@ -182,7 +189,7 @@ export default function UserManagement() {
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 placeholder="Nama lengkap"
               />
             </div>
@@ -201,7 +208,7 @@ export default function UserManagement() {
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
                 }
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 placeholder="user@example.com"
               />
             </div>
@@ -225,7 +232,7 @@ export default function UserManagement() {
                 onChange={(e) =>
                   setFormData({ ...formData, password: e.target.value })
                 }
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 placeholder={editingId ? '********' : 'Min. 6 karakter'}
               />
             </div>
@@ -236,27 +243,22 @@ export default function UserManagement() {
               >
                 Role
               </label>
-              <select
-                id="role"
-                value={formData.role}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    role: e.target.value as 'admin' | 'staff',
-                  })
-                }
-                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="staff">Staff</option>
-                <option value="admin">Admin</option>
-              </select>
+              <Select value={formData.role} onValueChange={(val) => { if (val) setFormData({ ...formData, role: val as 'admin' | 'staff' }); }}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="staff">Staff</SelectItem>
+                  <SelectItem value="admin">Admin</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button
               type="submit"
               disabled={submitting}
-              className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting
                 ? 'Menyimpan...'
@@ -268,7 +270,7 @@ export default function UserManagement() {
               <button
                 type="button"
                 onClick={handleCancelEdit}
-                className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
               >
                 Batal
               </button>
@@ -296,7 +298,7 @@ export default function UserManagement() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Name
+                    Nama
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
                     Email
@@ -305,10 +307,10 @@ export default function UserManagement() {
                     Role
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Created
+                    Dibuat
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Actions
+                    Aksi
                   </th>
                 </tr>
               </thead>
@@ -342,7 +344,7 @@ export default function UserManagement() {
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => handleEditClick(user)}
-                          className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                          className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
                         >
                           Edit
                         </button>
@@ -356,7 +358,7 @@ export default function UserManagement() {
                             </button>
                             <button
                               onClick={() => setDeleteConfirmId(null)}
-                              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                              className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-1"
                             >
                               Batal
                             </button>

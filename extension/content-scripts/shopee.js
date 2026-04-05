@@ -52,6 +52,12 @@
     /^https?:\/\/shopee\.co\.id\/shop\/(\d+)/,
   ];
 
+  /**
+   * Regex to detect a Shopee product URL.
+   * Product URLs follow: /{Title}-i.{shopId}.{itemId}
+   */
+  const PRODUCT_URL_PATTERN = /-i\.(\d+)\.(\d+)/;
+
   // ── Utility Helpers ────────────────────────────────────────
 
   /**
@@ -94,20 +100,28 @@
   function waitForProducts(timeoutMs = PAGE_LOAD_TIMEOUT_MS) {
     return new Promise((resolve) => {
       const check = () => {
-        // Look for links to product pages as a signal that results loaded
-        const productLinks = document.querySelectorAll('a[href*="/product/"], a[data-sqe="link"]');
-        if (productLinks.length > 0) return true;
+        // Look for product links with the -i.{shopId}.{itemId} pattern
+        const allLinks = document.querySelectorAll('a[href]');
+        let productLinkCount = 0;
+        for (const link of allLinks) {
+          if (isProductUrl(link.href || link.getAttribute('href') || '')) {
+            productLinkCount++;
+          }
+        }
+
+        // Fallback: look for list items (product cards are <li> elements)
+        const listItems = document.querySelectorAll('li a[href]');
 
         // Fallback: look for the results container
         const container =
           document.querySelector(SELECTORS.resultsContainer) ||
           document.querySelector(SELECTORS.resultsContainerFallback);
 
+        if (productLinkCount > 0) return true;
+        if (listItems.length > 5) return true;
         if (container && container.children.length > 0) return true;
 
-        // Fallback: look for any shop links on the page
-        const shopLinks = findShopLinks();
-        return shopLinks.length > 0;
+        return false;
       };
 
       if (check()) {
@@ -162,6 +176,31 @@
       await sleep(SCROLL_DELAY_MS);
       attempts++;
     }
+  }
+
+  // ── Product URL Helpers ───────────────────────────────────
+
+  /**
+   * Check if a URL is a Shopee product URL.
+   * Pattern: /{Title}-i.{shopId}.{itemId}
+   * @param {string} href
+   * @returns {boolean}
+   */
+  function isProductUrl(href) {
+    if (!href) return false;
+    return PRODUCT_URL_PATTERN.test(href);
+  }
+
+  /**
+   * Extract shopId from a Shopee product URL.
+   * Pattern: /{Title}-i.{shopId}.{itemId}
+   * @param {string} href
+   * @returns {string|null}
+   */
+  function extractShopIdFromProductUrl(href) {
+    if (!href) return null;
+    const match = href.match(PRODUCT_URL_PATTERN);
+    return match ? match[1] : null;
   }
 
   // ── Extraction Logic ───────────────────────────────────────
@@ -272,95 +311,138 @@
 
   /**
    * Given a product card element, try to find the shop/seller information.
-   * Shopee product cards contain a link to the seller's shop page.
+   * On search results, cards only have product links (not shop links).
+   * Shop ID is extracted from product URL (-i.{shopId}.{itemId}) or
+   * from the "Produk Serupa" link (?shopid={shopId}).
    *
    * @param {Element} card
    * @returns {{ name: string, url: string } | null}
    */
   function extractShopInfo(card) {
     const links = card.querySelectorAll('a[href]');
+    let shopId = null;
 
+    // Priority 1: "Produk Serupa" / find_similar_products link has explicit shopid
     for (const link of links) {
-      const href = link.href;
-      if (isShopUrl(href)) {
-        const name = link.textContent.trim();
-        if (name && name.length > 0 && name.length < 200) {
-          return {
-            name,
-            url: href.split('?')[0],
-          };
+      const href = link.href || link.getAttribute('href') || '';
+      if (href.includes('find_similar_products') || href.includes('shopid=')) {
+        try {
+          const url = new URL(href, 'https://shopee.co.id');
+          const sid = url.searchParams.get('shopid');
+          if (sid) {
+            shopId = sid;
+            break;
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    // Priority 2: Extract from product URL pattern -i.{shopId}.{itemId}
+    if (!shopId) {
+      for (const link of links) {
+        const href = link.href || link.getAttribute('href') || '';
+        const sid = extractShopIdFromProductUrl(href);
+        if (sid) {
+          shopId = sid;
+          break;
         }
       }
     }
 
-    // Fallback: look for shop name text elements
-    // Shopee sometimes shows the shop name as a span/div near the shop icon
-    const allText = card.querySelectorAll('span, div');
-    for (const el of allText) {
-      const parent = el.parentElement;
-      if (!parent) continue;
-
-      // Check if this element's parent or ancestor is a link to a shop
-      const anchor = el.closest('a[href]');
-      if (anchor && isShopUrl(anchor.href)) {
-        const text = el.textContent.trim();
-        if (text && text.length > 0 && text.length < 200) {
+    // Priority 3: Fallback to direct shop links (if any exist)
+    if (!shopId) {
+      for (const link of links) {
+        if (isShopUrl(link.href)) {
           return {
-            name: text,
-            url: anchor.href.split('?')[0],
+            name: link.textContent.trim().substring(0, 100) || 'Unknown Shop',
+            url: link.href.split('?')[0],
           };
         }
       }
+      return null;
     }
 
-    return null;
+    // Build shop URL from extracted shopId
+    const shopUrl = `https://shopee.co.id/shop/${shopId}`;
+
+    // Use shopId as the name — we don't have the shop name on search results
+    return {
+      name: `Shop ${shopId}`,
+      url: shopUrl,
+    };
   }
 
   /**
    * Extract seller location text from a product card.
-   * On Shopee search results, the location is shown as a small
-   * text element (usually near the bottom of the card).
+   * The location element is a div/span containing a pin icon <img>
+   * followed by the city name text (e.g., "Palu", "Jakarta Selatan").
    * @param {Element} card
    * @returns {string}
    */
   function extractLocation(card) {
-    // Shopee often shows location as a short text snippet
-    // Look for elements that contain location-like text
+    // Strategy 1: Find img with alt containing "location", then read sibling spans
+    // Verified DOM: <div><img alt="location-icon"><span data-testid="a11y-label"><span class="ml-[3px]">Palu</span></span></div>
+    const locationImgs = card.querySelectorAll('img[alt*="location"]');
+
+    for (const img of locationImgs) {
+      const parent = img.parentElement;
+      if (!parent) continue;
+
+      // Get text from sibling elements after the img
+      const siblings = parent.children;
+      for (const sib of siblings) {
+        if (sib === img) continue;
+        const text = sib.textContent.trim();
+        if (
+          text.length >= 2 &&
+          text.length <= 50 &&
+          !text.includes('Rp') &&
+          !text.includes('%') &&
+          !text.includes('terjual') &&
+          !text.match(/^\d/)
+        ) {
+          return text;
+        }
+      }
+
+      // Also check parent's direct text and all descendant text
+      const parentText = parent.textContent.replace(img.textContent || '', '').trim();
+      if (
+        parentText.length >= 2 &&
+        parentText.length <= 50 &&
+        !parentText.includes('Rp') &&
+        !parentText.includes('%') &&
+        !parentText.includes('terjual') &&
+        !parentText.match(/^\d/)
+      ) {
+        return parentText;
+      }
+    }
+
+    // Strategy 2: Fallback — look for short text near card bottom
     const allSpans = card.querySelectorAll('span, div');
 
     for (const el of allSpans) {
       const text = el.textContent.trim();
 
-      // Location is typically a city/region name: short, no special chars
       if (
         text.length >= 2 &&
         text.length <= 50 &&
+        el.children.length === 0 &&
         !text.includes('Rp') &&
         !text.includes('%') &&
         !text.includes('terjual') &&
         !text.includes('Terjual') &&
         !text.includes('rating') &&
         !text.match(/^\d/) &&
-        !text.includes('OFF')
+        !text.includes('OFF') &&
+        !text.includes('Produk Serupa')
       ) {
-        // Check if this looks like a location — near the bottom of the card,
-        // small text, and the element has no child elements (leaf node)
-        if (el.children.length === 0) {
-          const parentText = el.parentElement
-            ? el.parentElement.textContent.trim()
-            : '';
+        const rect = el.getBoundingClientRect();
+        const cardRect = card.getBoundingClientRect();
 
-          // Location is usually standalone or in a small container
-          if (parentText === text || parentText.length < text.length + 20) {
-            // Heuristic: location text is near shop name or at card bottom
-            const rect = el.getBoundingClientRect();
-            const cardRect = card.getBoundingClientRect();
-
-            // Location is typically in the lower portion of the card
-            if (rect.top > cardRect.top + cardRect.height * 0.5) {
-              return text;
-            }
-          }
+        if (rect.top > cardRect.top + cardRect.height * 0.5) {
+          return text;
         }
       }
     }
@@ -498,68 +580,65 @@
 
   /**
    * Find product card elements on the current page.
-   * Since Shopee obfuscates class names, we use structural analysis
-   * to identify the repeating grid items in search results.
+   * Shopee renders search results as <li> items inside a <ul>.
+   * Each <li> contains product links with the pattern -i.{shopId}.{itemId}.
    * @returns {Element[]}
    */
   function findProductCards() {
-    // Strategy 1: look for the search results grid container
-    const container =
-      document.querySelector(SELECTORS.resultsContainer) ||
-      document.querySelector(SELECTORS.resultsContainerFallback);
+    // Strategy 1: Find <li> elements containing product links
+    const allListItems = document.querySelectorAll('li');
+    const cards = [];
 
-    if (container) {
-      // Look for direct children that contain product links
-      const children = container.children;
-      const cards = [];
+    for (const li of allListItems) {
+      const links = li.querySelectorAll('a[href]');
+      let hasProduct = false;
 
-      for (const child of children) {
-        // A product card should contain at least one link
-        const hasProductLink =
-          child.querySelector('a[href*="/product/"]') ||
-          child.querySelector('a[data-sqe="link"]') ||
-          child.querySelector('a[href*="shopee.co.id/"]');
-
-        if (hasProductLink) {
-          cards.push(child);
+      for (const link of links) {
+        const href = link.href || link.getAttribute('href') || '';
+        if (isProductUrl(href)) {
+          hasProduct = true;
+          break;
         }
       }
 
-      if (cards.length > 0) return cards;
+      if (hasProduct) {
+        cards.push(li);
+      }
     }
 
-    // Strategy 2: find all elements that contain both a product link and a shop link
-    // This is a bottom-up approach: find shop links, then walk up to the card boundary
-    const shopLinks = findShopLinks();
+    if (cards.length > 0) return cards;
+
+    // Strategy 2: Bottom-up from product links — walk up to card boundary
+    const allLinks = document.querySelectorAll('a[href]');
     const cardSet = new Set();
 
-    for (const link of shopLinks) {
-      // Walk up from the shop link to find the product card boundary.
-      // A card boundary is typically 3-6 levels up from the shop link.
+    for (const link of allLinks) {
+      const href = link.href || link.getAttribute('href') || '';
+      if (!isProductUrl(href)) continue;
+
+      // Walk up from the product link to find the card boundary
       let el = link.parentElement;
       let depth = 0;
 
       while (el && depth < 8) {
-        // A card is likely found when the element has siblings
-        // that also contain shop links (i.e., it is a grid item)
         if (el.parentElement) {
           const siblings = el.parentElement.children;
-          let siblingShopLinks = 0;
+          let siblingProductLinks = 0;
 
           for (const sib of siblings) {
-            if (sib !== el && sib.querySelector('a[href]')) {
-              const links = sib.querySelectorAll('a[href]');
-              for (const l of links) {
-                if (isShopUrl(l.href)) {
-                  siblingShopLinks++;
-                  break;
-                }
+            if (sib === el) continue;
+            const sibLinks = sib.querySelectorAll('a[href]');
+            for (const l of sibLinks) {
+              const h = l.href || l.getAttribute('href') || '';
+              if (isProductUrl(h)) {
+                siblingProductLinks++;
+                break;
               }
             }
           }
 
-          // If multiple siblings also have shop links, this level is the card
-          if (siblingShopLinks >= 2) {
+          // If multiple siblings also have product links, this level is the card
+          if (siblingProductLinks >= 2) {
             cardSet.add(el);
             break;
           }
@@ -577,38 +656,50 @@
 
   /**
    * Collect unique merchants from all product cards currently
-   * visible on the page.
+   * visible on the page. Uses DOM-only extraction to avoid
+   * triggering Shopee's anti-bot CAPTCHA (API calls to
+   * /api/v4/product/get_shop_info redirect to /verify/captcha).
    * @param {Map<string, Object>} merchantMap — existing merchants (keyed by URL)
    * @param {string} regionCode
    * @param {string} regionName
    */
   function collectMerchantsFromPage(merchantMap, regionCode, regionName) {
     const cards = findProductCards();
+    let skippedNoShop = 0;
+    let skippedDuplicate = 0;
+    let added = 0;
 
     for (const card of cards) {
       const shopInfo = extractShopInfo(card);
-      if (!shopInfo || !shopInfo.name) continue;
+      if (!shopInfo || !shopInfo.name) {
+        skippedNoShop++;
+        continue;
+      }
 
-      // Build a canonical URL key for deduplication
       const urlKey = shopInfo.url || shopInfo.name.toLowerCase();
-
-      if (merchantMap.has(urlKey)) continue;
+      if (merchantMap.has(urlKey)) {
+        skippedDuplicate++;
+        continue;
+      }
 
       const location = extractLocation(card);
       const official = isOfficialStore(card);
       const rating = extractRating(card);
       const totalSold = extractSoldCount(card);
 
+      const merchantId = extractShopId(shopInfo.url || '') ||
+        extractShopIdFromProductUrl(shopInfo.url || '') || '';
+
       merchantMap.set(urlKey, {
         platform: 'shopee',
         merchantName: shopInfo.name,
         merchantUrl: shopInfo.url || '',
-        merchantId: extractShopId(shopInfo.url || ''),
+        merchantId: merchantId,
         address: location,
         provinceCode: regionCode,
         provinceName: regionName,
         regencyCode: '',
-        regencyName: '',
+        regencyName: location || '',
         districtCode: '',
         districtName: '',
         category: '',
@@ -621,7 +712,9 @@
         description: '',
         scrapedAt: new Date().toISOString(),
       });
+      added++;
     }
+
   }
 
   /**
@@ -689,7 +782,7 @@
       // Extra wait for lazy renders
       await sleep(1000);
 
-      // Collect merchants from current page
+      // Collect merchants from current page (DOM-only, no API calls)
       const previousCount = merchantMap.size;
       collectMerchantsFromPage(merchantMap, regionCode, regionName);
 
@@ -725,29 +818,38 @@
 
   // ── Message Listener ───────────────────────────────────────
 
+  // Note: Shopee scraping is now handled via chrome.scripting.executeScript
+  // in service-worker.js. This content script is kept for legacy compatibility
+  // but is no longer the primary scraping mechanism.
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.action !== 'startScrape' || message.platform !== 'shopee') {
       return false;
     }
 
-    const { regionCode, regionName } = message;
+    const { regionCode, regionName, keyword } = message;
 
-    console.log(
-      `[SE-Shopee] Received startScrape for region ${regionCode} (${regionName})`
-    );
+    sendResponse({ received: true });
 
     scrapeAllPages(regionCode, regionName)
       .then((merchants) => {
-        sendResponse({ success: true, merchants });
+        chrome.runtime.sendMessage({
+          action: 'shopeeResults',
+          keyword: keyword || '',
+          success: true,
+          merchants,
+        });
       })
       .catch((err) => {
         console.error('[SE-Shopee] Scraping error:', err);
-        sendResponse({ success: false, merchants: [], error: err.message });
+        chrome.runtime.sendMessage({
+          action: 'shopeeResults',
+          keyword: keyword || '',
+          success: false,
+          merchants: [],
+          error: err.message,
+        });
       });
 
-    // Return true to keep the message channel open for the async response
-    return true;
+    return false;
   });
-
-  console.log('[SE-Shopee] Content script loaded and ready.');
 })();

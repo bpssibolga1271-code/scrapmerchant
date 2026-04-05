@@ -35,11 +35,11 @@ export default function StatsCard({
                 {trend.isPositive ? '+' : ''}
                 {trend.value}%
               </span>
-              <span className="text-xs text-gray-500">vs last month</span>
+              <span className="text-xs text-gray-500">vs bulan lalu</span>
             </div>
           )}
         </div>
-        <div className="rounded-lg bg-blue-50 p-3 text-blue-600">{icon}</div>
+        <div className="rounded-lg bg-amber-50 p-3 text-amber-600">{icon}</div>
       </div>
     </div>
   );

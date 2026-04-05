@@ -76,6 +76,95 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // ── CAPTCHA / Dialog Detection ───────────────────────────────
+
+  /**
+   * Detect whether a CAPTCHA, verification dialog, or blocking
+   * overlay is currently visible on the page.
+   * @returns {boolean}
+   */
+  function detectCaptcha() {
+    // 1. Check for elements whose class or id contains CAPTCHA-related keywords
+    const selectorKeywords = ['captcha', 'verify', 'challenge', 'recaptcha'];
+    for (const keyword of selectorKeywords) {
+      const byClass = document.querySelector(`[class*="${keyword}"]`);
+      const byId = document.querySelector(`[id*="${keyword}"]`);
+      if (byClass || byId) return true;
+    }
+
+    // 2. Check for modal / dialog overlays that may block the page
+    const overlaySelectors = [
+      '[role="dialog"]',
+      '[role="alertdialog"]',
+      '.modal',
+      '.overlay',
+      '[class*="modal"]',
+      '[class*="overlay"]',
+      '[class*="dialog"]',
+    ];
+    for (const sel of overlaySelectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const style = window.getComputedStyle(el);
+        // Only count it if it is actually visible
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          // Heuristic: if the overlay covers a large portion of the viewport
+          const rect = el.getBoundingClientRect();
+          if (rect.width > window.innerWidth * 0.3 && rect.height > window.innerHeight * 0.3) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // 3. Check for any visible element whose text matches CAPTCHA-related words
+    const textKeywords = ['verify', 'verifikasi', 'robot', 'captcha'];
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
+      null,
+      false
+    );
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = (node.textContent || '').trim().toLowerCase();
+      if (!text) continue;
+      for (const keyword of textKeywords) {
+        if (text.includes(keyword)) {
+          // Make sure the parent element is visible
+          const parent = node.parentElement;
+          if (parent) {
+            const style = window.getComputedStyle(parent);
+            if (style.display !== 'none' && style.visibility !== 'hidden') {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * If a CAPTCHA / verification dialog is detected, notify the
+   * background script and poll every 3 seconds until it is resolved.
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    if (!detectCaptcha()) return;
+
+    console.log('[SE-Zalora] CAPTCHA/dialog detected — waiting for user to solve it...');
+    chrome.runtime.sendMessage({ action: 'captchaDetected', platform: 'zalora' });
+
+    while (detectCaptcha()) {
+      await sleep(3000);
+    }
+
+    console.log('[SE-Zalora] CAPTCHA resolved, resuming...');
+    chrome.runtime.sendMessage({ action: 'captchaResolved', platform: 'zalora' });
+  }
+
   // ── Extraction Logic ───────────────────────────────────────
 
   /**
@@ -154,6 +243,9 @@
 
     console.log('[SE-Zalora] Starting brand extraction from brands page...');
 
+    // Check for CAPTCHA / verification dialog before starting
+    await waitForCaptchaResolution();
+
     // Wait for the page content to be present
     await waitForElement('body', PAGE_LOAD_TIMEOUT_MS);
 
@@ -215,6 +307,9 @@
     console.log(
       `[SE-Zalora] Found ${brandLinksFound} brand links, ${merchantMap.size} unique brands.`
     );
+
+    // Re-check for CAPTCHA between extraction strategies
+    await waitForCaptchaResolution();
 
     // Strategy 2: If Strategy 1 found nothing, try looking for
     // list elements that contain brand links (more structured approach)
@@ -293,6 +388,9 @@
         `[SE-Zalora] Alternative extraction found ${merchantMap.size} brands.`
       );
     }
+
+    // Re-check for CAPTCHA between extraction strategies
+    await waitForCaptchaResolution();
 
     // Strategy 3: If still nothing, try to extract from any structured
     // container that looks like a brand listing

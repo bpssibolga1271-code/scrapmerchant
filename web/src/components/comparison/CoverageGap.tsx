@@ -12,6 +12,7 @@ interface CoverageGapProps {
   platforms: string[];
   coverageMatrix: CoverageRow[];
   coverageSummary: Record<string, number>;
+  levelLabel?: string;
 }
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -21,63 +22,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   gofood: 'GoFood',
   lazada: 'Lazada',
   blibli: 'Blibli',
-  zalora: 'Zalora',
 };
-
-const MOCK_PLATFORMS = [
-  'tokopedia',
-  'shopee',
-  'grabfood',
-  'gofood',
-  'lazada',
-  'blibli',
-  'zalora',
-];
-
-const MOCK_PROVINCES = [
-  'DKI Jakarta',
-  'Jawa Barat',
-  'Jawa Tengah',
-  'DI Yogyakarta',
-  'Jawa Timur',
-  'Banten',
-  'Bali',
-  'Sumatera Utara',
-  'Sulawesi Selatan',
-  'Kalimantan Timur',
-  'Sumatera Barat',
-  'Riau',
-  'Lampung',
-  'Kalimantan Selatan',
-  'Nusa Tenggara Barat',
-];
-
-function generateMockCoverage(): {
-  matrix: CoverageRow[];
-  summary: Record<string, number>;
-} {
-  const matrix: CoverageRow[] = MOCK_PROVINCES.map((name, i) => {
-    const row: CoverageRow = {
-      regionCode: String(10 + i),
-      regionName: name,
-    };
-    for (const platform of MOCK_PLATFORMS) {
-      // More popular platforms have higher coverage
-      const probability =
-        platform === 'tokopedia' || platform === 'shopee' ? 0.8 : 0.4;
-      row[platform] = Math.random() < probability;
-    }
-    return row;
-  });
-
-  const summary: Record<string, number> = {};
-  for (const platform of MOCK_PLATFORMS) {
-    const covered = matrix.filter((r) => r[platform] === true).length;
-    summary[platform] = Math.round((covered / matrix.length) * 100);
-  }
-
-  return { matrix, summary };
-}
 
 function getCoverageColor(percentage: number): string {
   if (percentage >= 80) return 'text-green-700 bg-green-50';
@@ -89,26 +34,41 @@ export default function CoverageGap({
   platforms,
   coverageMatrix,
   coverageSummary,
+  levelLabel = 'Provinsi',
 }: CoverageGapProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const useMock = coverageMatrix.length === 0;
-  const mockData = useMemo(() => generateMockCoverage(), []);
-
-  const actualPlatforms = useMock ? MOCK_PLATFORMS : platforms;
-  const actualMatrix = useMock ? mockData.matrix : coverageMatrix;
-  const actualSummary = useMock ? mockData.summary : coverageSummary;
-
   const filteredMatrix = useMemo(() => {
-    if (!searchQuery.trim()) return actualMatrix;
+    if (!searchQuery.trim()) return coverageMatrix;
     const query = searchQuery.toLowerCase();
-    return actualMatrix.filter((row) =>
+    return coverageMatrix.filter((row) =>
       (row.regionName as string).toLowerCase().includes(query),
     );
-  }, [actualMatrix, searchQuery]);
+  }, [coverageMatrix, searchQuery]);
 
   // Calculate total covered provinces per platform for the filtered view
-  const totalProvinces = actualMatrix.length;
+  const totalProvinces = coverageMatrix.length;
+
+  if (coverageMatrix.length === 0) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">
+            Gap Cakupan Platform
+          </h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Matriks ketersediaan data per platform di setiap {levelLabel.toLowerCase()}
+          </p>
+        </div>
+        <div className="flex h-72 items-center justify-center">
+          <div className="text-center">
+            <p className="text-sm font-medium text-gray-400">Belum ada data</p>
+            <p className="mt-1 text-xs text-gray-300">Data akan muncul setelah scraping dilakukan</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -118,7 +78,7 @@ export default function CoverageGap({
             Gap Cakupan Platform
           </h3>
           <p className="mt-1 text-sm text-gray-500">
-            Matriks ketersediaan data per platform di setiap provinsi
+            Matriks ketersediaan data per platform di setiap {levelLabel.toLowerCase()}
           </p>
         </div>
         <div className="relative">
@@ -137,18 +97,18 @@ export default function CoverageGap({
           </svg>
           <input
             type="text"
-            placeholder="Cari provinsi..."
+            placeholder="Cari wilayah..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:w-56"
+            className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 sm:w-56"
           />
         </div>
       </div>
 
       {/* Coverage summary cards */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-        {actualPlatforms.map((platform) => {
-          const pct = actualSummary[platform] ?? 0;
+        {platforms.map((platform) => {
+          const pct = coverageSummary[platform] ?? 0;
           return (
             <div
               key={platform}
@@ -170,9 +130,9 @@ export default function CoverageGap({
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50">
               <th className="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-                Provinsi
+                {levelLabel}
               </th>
-              {actualPlatforms.map((platform) => (
+              {platforms.map((platform) => (
                 <th
                   key={platform}
                   className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider text-gray-500"
@@ -191,7 +151,7 @@ export default function CoverageGap({
                 <td className="sticky left-0 z-10 bg-white px-4 py-2.5 text-sm font-medium text-gray-900">
                   {row.regionName as string}
                 </td>
-                {actualPlatforms.map((platform) => {
+                {platforms.map((platform) => {
                   const hasData = row[platform] === true;
                   return (
                     <td
@@ -245,10 +205,10 @@ export default function CoverageGap({
             {filteredMatrix.length === 0 && (
               <tr>
                 <td
-                  colSpan={actualPlatforms.length + 1}
+                  colSpan={platforms.length + 1}
                   className="px-4 py-8 text-center text-sm text-gray-500"
                 >
-                  Tidak ada provinsi ditemukan.
+                  Tidak ada wilayah ditemukan.
                 </td>
               </tr>
             )}
@@ -257,10 +217,10 @@ export default function CoverageGap({
           <tfoot>
             <tr className="border-t-2 border-gray-200 bg-gray-50 font-semibold">
               <td className="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-xs uppercase tracking-wider text-gray-600">
-                Cakupan Total ({totalProvinces} provinsi)
+                Cakupan Total ({totalProvinces} {levelLabel.toLowerCase()})
               </td>
-              {actualPlatforms.map((platform) => {
-                const pct = actualSummary[platform] ?? 0;
+              {platforms.map((platform) => {
+                const pct = coverageSummary[platform] ?? 0;
                 return (
                   <td
                     key={platform}
@@ -278,12 +238,6 @@ export default function CoverageGap({
           </tfoot>
         </table>
       </div>
-
-      {useMock && (
-        <p className="mt-4 text-center text-xs text-amber-600">
-          Data placeholder ditampilkan karena database kosong.
-        </p>
-      )}
     </div>
   );
 }

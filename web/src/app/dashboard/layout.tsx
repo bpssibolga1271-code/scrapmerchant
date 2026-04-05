@@ -1,8 +1,8 @@
 import Sidebar from '@/components/layout/Sidebar';
 
 export const metadata = {
-  title: 'Dashboard - SE Merchant Scraper',
-  description: 'Dashboard overview for SE Merchant Scraper',
+  title: 'Dashboard - Sensus Ekonomi 2026',
+  description: 'Dashboard Sensus Ekonomi 2026',
 };
 
 export default function DashboardLayout({

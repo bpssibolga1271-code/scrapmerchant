@@ -1,78 +1,59 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
 
-import { prisma } from '@/lib/prisma';
+import {
+  appendMerchants,
+  deleteMerchants,
+  getMerchantStats,
+  readMerchants,
+  type MerchantRecord,
+} from '@/lib/parquet';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const format = searchParams.get('format');
 
-    const provinceCode = searchParams.get('provinceCode');
-    const regencyCode = searchParams.get('regencyCode');
-    const districtCode = searchParams.get('districtCode');
+    // Return stats summary
+    if (format === 'stats') {
+      const stats = await getMerchantStats();
+      return NextResponse.json(stats);
+    }
+
+    // Return all data as JSON (for backward compatibility)
+    const merchants = await readMerchants();
+
     const platform = searchParams.get('platform');
-    const category = searchParams.get('category');
-    const dateFrom = searchParams.get('dateFrom');
-    const dateTo = searchParams.get('dateTo');
+    const regionCode = searchParams.get('regionCode');
     const search = searchParams.get('search');
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') ?? '20', 10)));
+    const limit = Math.min(10000, Math.max(1, parseInt(searchParams.get('limit') ?? '20', 10)));
 
-    const where: Prisma.MerchantWhereInput = {};
-
-    if (provinceCode) {
-      where.region = { code: provinceCode };
-    }
-
-    if (regencyCode) {
-      where.region = { code: regencyCode };
-    }
-
-    if (districtCode) {
-      where.region = { code: districtCode };
-    }
+    let filtered = merchants;
 
     if (platform) {
-      where.platform = platform as Prisma.EnumPlatformFilter['equals'];
+      filtered = filtered.filter((m) => m.platform === platform);
     }
-
-    if (category) {
-      where.category = { contains: category };
+    if (regionCode) {
+      filtered = filtered.filter(
+        (m) => m.regionCode === regionCode || m.provinceCode === regionCode,
+      );
     }
-
-    if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) {
-        where.createdAt.gte = new Date(dateFrom);
-      }
-      if (dateTo) {
-        where.createdAt.lte = new Date(dateTo);
-      }
-    }
-
     if (search) {
-      where.name = { contains: search };
+      const q = search.toLowerCase();
+      filtered = filtered.filter(
+        (m) =>
+          m.name.toLowerCase().includes(q) ||
+          m.address?.toLowerCase().includes(q) ||
+          m.category?.toLowerCase().includes(q),
+      );
     }
 
+    const total = filtered.length;
     const skip = (page - 1) * limit;
-
-    const [merchants, total] = await Promise.all([
-      prisma.merchant.findMany({
-        where,
-        include: {
-          region: {
-            select: { id: true, code: true, name: true, level: true },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      prisma.merchant.count({ where }),
-    ]);
+    const paginated = filtered.slice(skip, skip + limit);
 
     return NextResponse.json({
-      merchants,
+      merchants: paginated,
       total,
       page,
       limit,
@@ -97,7 +78,6 @@ interface IncomingMerchant {
   monthlySales?: number;
   totalTransactions?: number;
   operatingHours?: string;
-  socialMediaLinks?: Record<string, string>;
   ownerName?: string;
   sourceUrl?: string;
 }
@@ -105,6 +85,9 @@ interface IncomingMerchant {
 interface PostBody {
   merchants: IncomingMerchant[];
   regionCode: string;
+  regionName?: string;
+  provinceCode?: string;
+  provinceName?: string;
   platform: string;
 }
 
@@ -135,45 +118,78 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const region = await prisma.region.findUnique({
-      where: { code: regionCode },
-    });
+    const now = new Date().toISOString();
 
-    if (!region) {
-      return NextResponse.json(
-        { error: `Region with code '${regionCode}' not found` },
-        { status: 404 },
-      );
-    }
-
-    const data = merchants.map((m) => ({
-      regionId: region.id,
-      platform: platform as Prisma.EnumPlatformFilter['equals'],
+    const records: MerchantRecord[] = merchants.map((m) => ({
+      platform,
       name: m.name,
       address: m.address ?? null,
       category: m.category ?? null,
       phone: m.phone ?? null,
       rating: m.rating ?? null,
       productCount: m.productCount ?? null,
-      joinDate: m.joinDate ? new Date(m.joinDate) : null,
+      joinDate: m.joinDate ?? null,
       monthlySales: m.monthlySales ?? null,
       totalTransactions: m.totalTransactions ?? null,
       operatingHours: m.operatingHours ?? null,
-      socialMediaLinks: m.socialMediaLinks ?? Prisma.JsonNull,
       ownerName: m.ownerName ?? null,
       sourceUrl: m.sourceUrl ?? null,
+      regionCode,
+      regionName: body.regionName ?? regionCode,
+      provinceCode: body.provinceCode ?? regionCode.slice(0, 2),
+      provinceName: body.provinceName ?? '',
+      createdAt: now,
     }));
 
-    const result = await prisma.merchant.createMany({ data });
+    const result = await appendMerchants(records);
 
     return NextResponse.json({
       success: true,
-      count: result.count,
+      count: result.added,
+      skipped: result.skipped,
     });
   } catch (error) {
     console.error('Error ingesting merchants:', error);
     return NextResponse.json(
       { error: 'Failed to ingest merchant data' },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+
+    const platform = searchParams.get('platform');
+    const regionCode = searchParams.get('regionCode');
+    const dateFrom = searchParams.get('dateFrom');
+    const dateTo = searchParams.get('dateTo');
+    const deleteAll = searchParams.get('all') === 'true';
+
+    if (!deleteAll && !platform && !regionCode && !dateFrom && !dateTo) {
+      return NextResponse.json(
+        { error: 'Specify filters or use ?all=true to delete everything' },
+        { status: 400 },
+      );
+    }
+
+    const deleted = await deleteMerchants({
+      platform: platform ?? undefined,
+      regionCode: regionCode ?? undefined,
+      dateFrom: dateFrom ?? undefined,
+      dateTo: dateTo ?? undefined,
+      all: deleteAll,
+    });
+
+    return NextResponse.json({
+      success: true,
+      deleted: deleted === -1 ? 'all' : deleted,
+    });
+  } catch (error) {
+    console.error('Error deleting merchants:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete merchants' },
       { status: 500 },
     );
   }

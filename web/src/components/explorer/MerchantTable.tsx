@@ -9,6 +9,13 @@ import {
   type PaginationState,
 } from '@tanstack/react-table';
 import { useMemo, useState } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 export interface MerchantRow {
   id: number;
@@ -57,7 +64,7 @@ export default function MerchantTable({
   const columns = useMemo(
     () => [
       columnHelper.accessor('name', {
-        header: 'Name',
+        header: 'Nama',
         cell: (info) => (
           <span className="font-medium text-gray-900">{info.getValue()}</span>
         ),
@@ -65,20 +72,20 @@ export default function MerchantTable({
       columnHelper.accessor('platform', {
         header: 'Platform',
         cell: (info) => (
-          <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium capitalize text-blue-700">
+          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium capitalize text-amber-700">
             {info.getValue()}
           </span>
         ),
       }),
       columnHelper.accessor((row) => row.region?.name ?? '-', {
         id: 'region',
-        header: 'Region',
+        header: 'Wilayah',
         cell: (info) => (
           <span className="text-gray-600">{info.getValue()}</span>
         ),
       }),
       columnHelper.accessor('category', {
-        header: 'Category',
+        header: 'Kategori',
         cell: (info) => (
           <span className="text-gray-600">{info.getValue() ?? '-'}</span>
         ),
@@ -96,7 +103,7 @@ export default function MerchantTable({
         },
       }),
       columnHelper.accessor('productCount', {
-        header: 'Products',
+        header: 'Produk',
         cell: (info) => {
           const val = info.getValue();
           if (val == null) return <span className="text-gray-400">-</span>;
@@ -104,7 +111,7 @@ export default function MerchantTable({
         },
       }),
       columnHelper.accessor('monthlySales', {
-        header: 'Sales',
+        header: 'Penjualan',
         cell: (info) => {
           const val = info.getValue();
           if (val == null) return <span className="text-gray-400">-</span>;
@@ -112,7 +119,7 @@ export default function MerchantTable({
         },
       }),
       columnHelper.accessor('createdAt', {
-        header: 'Scraped At',
+        header: 'Waktu Scraping',
         cell: (info) => {
           const date = new Date(info.getValue());
           return (
@@ -207,7 +214,7 @@ export default function MerchantTable({
                 >
                   <div className="flex items-center justify-center gap-2">
                     <svg
-                      className="h-5 w-5 animate-spin text-blue-600"
+                      className="h-5 w-5 animate-spin text-amber-600"
                       viewBox="0 0 24 24"
                       fill="none"
                     >
@@ -225,7 +232,7 @@ export default function MerchantTable({
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                       />
                     </svg>
-                    Loading merchants...
+                    Memuat merchant...
                   </div>
                 </td>
               </tr>
@@ -235,7 +242,7 @@ export default function MerchantTable({
                   colSpan={columns.length}
                   className="px-4 py-12 text-center text-sm text-gray-500"
                 >
-                  No data found. Try adjusting your filters.
+                  Data tidak ditemukan. Coba sesuaikan filter Anda.
                 </td>
               </tr>
             ) : (
@@ -269,22 +276,20 @@ export default function MerchantTable({
           <span>
             Showing {data.length === 0 ? 0 : (page - 1) * limit + 1} -{' '}
             {Math.min(page * limit, total)} of {total.toLocaleString()}{' '}
-            merchants
+            merchant
           </span>
-          <select
-            value={limit}
-            onChange={(e) => {
-              onLimitChange(Number(e.target.value));
-              onPageChange(1);
-            }}
-            className="rounded border border-gray-300 bg-white px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
-          >
-            {[10, 20, 50, 100].map((size) => (
-              <option key={size} value={size}>
-                {size}/page
-              </option>
-            ))}
-          </select>
+          <Select value={String(limit)} onValueChange={(val) => { if (val) { onLimitChange(Number(val)); onPageChange(1); } }}>
+            <SelectTrigger className="w-30">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[10, 20, 50, 100].map((size) => (
+                <SelectItem key={size} value={String(size)}>
+                  {size}/halaman
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="flex items-center gap-1">
@@ -294,7 +299,7 @@ export default function MerchantTable({
             disabled={page <= 1}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            First
+            Awal
           </button>
           <button
             type="button"
@@ -302,7 +307,7 @@ export default function MerchantTable({
             disabled={page <= 1}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Prev
+            Sblm
           </button>
           <span className="px-3 py-1 text-sm text-gray-700">
             {page} / {totalPages}
@@ -313,7 +318,7 @@ export default function MerchantTable({
             disabled={page >= totalPages}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Next
+            Brkt
           </button>
           <button
             type="button"
@@ -321,7 +326,7 @@ export default function MerchantTable({
             disabled={page >= totalPages}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Last
+            Akhir
           </button>
         </div>
       </div>

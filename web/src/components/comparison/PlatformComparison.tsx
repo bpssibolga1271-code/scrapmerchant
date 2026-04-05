@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -8,15 +8,9 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer,
   Legend,
   LabelList,
 } from 'recharts';
-
-interface Province {
-  code: string;
-  name: string;
-}
 
 interface ComparisonRow {
   regionCode: string;
@@ -26,8 +20,8 @@ interface ComparisonRow {
 
 interface PlatformComparisonProps {
   platforms: string[];
-  provinces: Province[];
   comparisonData: ComparisonRow[];
+  levelLabel?: string;
 }
 
 const PLATFORM_COLORS: Record<string, string> = {
@@ -37,7 +31,6 @@ const PLATFORM_COLORS: Record<string, string> = {
   gofood: '#ef4444',
   lazada: '#3b82f6',
   blibli: '#6366f1',
-  zalora: '#ec4899',
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -47,101 +40,33 @@ const PLATFORM_LABELS: Record<string, string> = {
   gofood: 'GoFood',
   lazada: 'Lazada',
   blibli: 'Blibli',
-  zalora: 'Zalora',
 };
-
-const MOCK_PROVINCES: Province[] = [
-  { code: '31', name: 'DKI Jakarta' },
-  { code: '32', name: 'Jawa Barat' },
-  { code: '33', name: 'Jawa Tengah' },
-  { code: '34', name: 'DI Yogyakarta' },
-  { code: '35', name: 'Jawa Timur' },
-  { code: '36', name: 'Banten' },
-  { code: '51', name: 'Bali' },
-  { code: '12', name: 'Sumatera Utara' },
-  { code: '73', name: 'Sulawesi Selatan' },
-  { code: '64', name: 'Kalimantan Timur' },
-];
-
-const MOCK_PLATFORMS = [
-  'tokopedia',
-  'shopee',
-  'grabfood',
-  'gofood',
-  'lazada',
-  'blibli',
-  'zalora',
-];
-
-function generateMockData(): ComparisonRow[] {
-  return MOCK_PROVINCES.map((province) => {
-    const row: ComparisonRow = {
-      regionCode: province.code,
-      regionName: province.name,
-    };
-    for (const platform of MOCK_PLATFORMS) {
-      row[platform] = Math.floor(Math.random() * 500) + 50;
-    }
-    return row;
-  });
-}
 
 export default function PlatformComparison({
   platforms,
-  provinces,
   comparisonData,
+  levelLabel = 'Provinsi',
 }: PlatformComparisonProps) {
-  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
-
-  const useMock = comparisonData.length === 0;
-  const actualPlatforms = useMock ? MOCK_PLATFORMS : platforms;
-  const actualProvinces = useMock ? MOCK_PROVINCES : provinces;
-  const actualData = useMemo(
-    () => (useMock ? generateMockData() : comparisonData),
-    [useMock, comparisonData],
-  );
-
+  // Sort by total merchant count descending, show ALL regions
   const chartData = useMemo(() => {
-    if (selectedRegions.length === 0) {
-      // Show top 5 provinces by total merchant count
-      return actualData
-        .map((row) => {
-          const total = actualPlatforms.reduce(
-            (sum, p) => sum + (Number(row[p]) || 0),
-            0,
-          );
-          return { ...row, _total: total };
-        })
-        .sort(
-          (a, b) =>
-            (b._total as number) - (a._total as number),
-        )
-        .slice(0, 5);
-    }
-    return actualData.filter((row) =>
-      selectedRegions.includes(row.regionCode as string),
-    );
-  }, [actualData, selectedRegions, actualPlatforms]);
+    if (comparisonData.length === 0) return [];
+    return comparisonData
+      .map((row) => {
+        const total = platforms.reduce(
+          (sum, p) => sum + (Number(row[p]) || 0),
+          0,
+        );
+        return { ...row, _total: total };
+      })
+      .sort((a, b) => (b._total as number) - (a._total as number));
+  }, [comparisonData, platforms]);
 
-  function handleRegionToggle(code: string) {
-    setSelectedRegions((prev) => {
-      if (prev.includes(code)) {
-        return prev.filter((c) => c !== code);
-      }
-      if (prev.length >= 5) {
-        return prev;
-      }
-      return [...prev, code];
-    });
-  }
+  // Calculate chart width: min 120px per region, at least 100% container width
+  const chartWidth = Math.max(chartData.length * 120, 800);
 
-  function handleClearSelection() {
-    setSelectedRegions([]);
-  }
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+  if (comparisonData.length === 0) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
         <div>
           <h3 className="text-lg font-semibold text-gray-900">
             Perbandingan Merchant per Platform
@@ -150,63 +75,44 @@ export default function PlatformComparison({
             Jumlah merchant di setiap platform untuk wilayah yang dipilih
           </p>
         </div>
-        {selectedRegions.length > 0 && (
-          <button
-            onClick={handleClearSelection}
-            className="shrink-0 rounded-md bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200"
-          >
-            Reset Pilihan
-          </button>
-        )}
-      </div>
-
-      {/* Region selector */}
-      <div className="mb-6">
-        <label className="mb-2 block text-sm font-medium text-gray-700">
-          Pilih Provinsi (maks. 5)
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {actualProvinces.map((province) => {
-            const isSelected = selectedRegions.includes(province.code);
-            return (
-              <button
-                key={province.code}
-                onClick={() => handleRegionToggle(province.code)}
-                disabled={!isSelected && selectedRegions.length >= 5}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                  isSelected
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50'
-                }`}
-              >
-                {province.name}
-              </button>
-            );
-          })}
+        <div className="flex h-72 items-center justify-center">
+          <div className="text-center">
+            <p className="text-sm font-medium text-gray-400">Belum ada data</p>
+            <p className="mt-1 text-xs text-gray-300">Data akan muncul setelah scraping dilakukan</p>
+          </div>
         </div>
-        {selectedRegions.length === 0 && (
-          <p className="mt-2 text-xs text-gray-400">
-            Menampilkan 5 provinsi teratas berdasarkan jumlah merchant.
-            Klik provinsi untuk memilih manual.
-          </p>
-        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Perbandingan Merchant per Platform
+        </h3>
+        <p className="mt-1 text-sm text-gray-500">
+          Jumlah merchant di setiap platform per {levelLabel.toLowerCase()} (diurutkan berdasarkan total merchant)
+        </p>
       </div>
 
-      {/* Bar chart */}
-      <div className="h-96">
-        <ResponsiveContainer width="100%" height="100%">
+      {/* Horizontally scrollable chart */}
+      <div className="overflow-x-auto pb-2">
+        <div style={{ width: chartWidth, minWidth: '100%', height: 420 }}>
           <BarChart
+            width={chartWidth}
+            height={420}
             data={chartData}
-            margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+            margin={{ top: 10, right: 10, left: 0, bottom: 60 }}
           >
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="regionName"
               tick={{ fontSize: 11 }}
               interval={0}
-              angle={-20}
+              angle={-30}
               textAnchor="end"
-              height={60}
+              height={80}
             />
             <YAxis tick={{ fontSize: 12 }} />
             <Tooltip
@@ -227,7 +133,7 @@ export default function PlatformComparison({
                 </span>
               )}
             />
-            {actualPlatforms.map((platform) => (
+            {platforms.map((platform) => (
               <Bar
                 key={platform}
                 dataKey={platform}
@@ -247,14 +153,8 @@ export default function PlatformComparison({
               </Bar>
             ))}
           </BarChart>
-        </ResponsiveContainer>
+        </div>
       </div>
-
-      {useMock && (
-        <p className="mt-4 text-center text-xs text-amber-600">
-          Data placeholder ditampilkan karena database kosong.
-        </p>
-      )}
     </div>
   );
 }

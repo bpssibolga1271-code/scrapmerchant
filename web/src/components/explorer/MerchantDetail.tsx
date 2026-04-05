@@ -99,14 +99,14 @@ export default function MerchantDetail({
             <h2 className="text-lg font-semibold text-gray-900">
               {merchant.name}
             </h2>
-            <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium capitalize text-blue-700">
+            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium capitalize text-amber-700">
               {merchant.platform}
             </span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-amber-500"
             aria-label="Close"
           >
             <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -122,17 +122,17 @@ export default function MerchantDetail({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <dl>
-            <DetailRow label="Name" value={merchant.name} />
+            <DetailRow label="Nama" value={merchant.name} />
             <DetailRow
               label="Platform"
               value={
                 <span className="capitalize">{merchant.platform}</span>
               }
             />
-            <DetailRow label="Region" value={merchant.region?.name} />
-            <DetailRow label="Address" value={merchant.address} />
-            <DetailRow label="Category" value={merchant.category} />
-            <DetailRow label="Phone" value={merchant.phone} />
+            <DetailRow label="Wilayah" value={merchant.region?.name} />
+            <DetailRow label="Alamat" value={merchant.address} />
+            <DetailRow label="Kategori" value={merchant.category} />
+            <DetailRow label="Telepon" value={merchant.phone} />
             <DetailRow
               label="Rating"
               value={
@@ -142,7 +142,7 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Product Count"
+              label="Jumlah Produk"
               value={
                 merchant.productCount != null
                   ? merchant.productCount.toLocaleString()
@@ -150,7 +150,7 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Join Date"
+              label="Tanggal Bergabung"
               value={
                 merchant.joinDate
                   ? new Date(merchant.joinDate).toLocaleDateString('id-ID', {
@@ -162,7 +162,7 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Monthly Sales"
+              label="Penjualan/Bulan"
               value={
                 merchant.monthlySales != null
                   ? merchant.monthlySales.toLocaleString()
@@ -170,7 +170,7 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Total Transactions"
+              label="Total Transaksi"
               value={
                 merchant.totalTransactions != null
                   ? merchant.totalTransactions.toLocaleString()
@@ -178,19 +178,19 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Operating Hours"
+              label="Jam Operasional"
               value={merchant.operatingHours}
             />
-            <DetailRow label="Owner Name" value={merchant.ownerName} />
+            <DetailRow label="Nama Pemilik" value={merchant.ownerName} />
             <DetailRow
-              label="Source URL"
+              label="URL Sumber"
               value={
                 merchant.sourceUrl ? (
                   <a
                     href={merchant.sourceUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
+                    className="text-amber-600 hover:underline"
                   >
                     {merchant.sourceUrl.length > 50
                       ? `${merchant.sourceUrl.slice(0, 50)}...`
@@ -200,7 +200,7 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Social Media"
+              label="Media Sosial"
               value={
                 socialLinks && Object.keys(socialLinks).length > 0 ? (
                   <ul className="space-y-1">
@@ -210,7 +210,7 @@ export default function MerchantDetail({
                           href={url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline"
+                          className="text-amber-600 hover:underline"
                         >
                           <span className="capitalize">{key}</span>
                         </a>
@@ -221,11 +221,11 @@ export default function MerchantDetail({
               }
             />
             <DetailRow
-              label="Scraped At"
+              label="Waktu Scraping"
               value={new Date(merchant.createdAt).toLocaleString('id-ID')}
             />
             <DetailRow
-              label="Updated At"
+              label="Waktu Update"
               value={new Date(merchant.updatedAt).toLocaleString('id-ID')}
             />
           </dl>

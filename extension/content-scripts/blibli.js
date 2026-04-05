@@ -1,13 +1,17 @@
 /**
  * SE Merchant Scraper — Blibli Content Script
  *
- * Injected on blibli.com search/cari pages. Listens for a
- * `startScrape` message from the service worker, extracts
- * unique merchant/seller data from product cards, and sends
- * results back via chrome.runtime.sendMessage.
+ * Injected on blibli.com pages. Supports two page types:
  *
- * Blibli search URL pattern: https://www.blibli.com/cari/{keyword}
- * Product cards contain merchant info: name, URL, location, rating.
+ *   1. Search/cari pages — extracts merchant data from product cards.
+ *      URL pattern: https://www.blibli.com/cari/{keyword}
+ *
+ *   2. Seller listing pages (`/semua-toko`) — extracts merchant/store
+ *      data directly from seller cards with location filtering.
+ *      URL pattern: https://www.blibli.com/semua-toko?location=<City>
+ *
+ * Listens for a `startScrape` message from the service worker and
+ * sends results back via the message response callback.
  */
 
 (function () {
@@ -49,6 +53,34 @@
    * Blibli merchant pages follow: blibli.com/merchant/{slug}
    */
   const MERCHANT_URL_PATTERN = /^https?:\/\/(www\.)?blibli\.com\/merchant\/([a-zA-Z0-9_-]+)/;
+
+  /**
+   * Selectors for the `/semua-toko` seller listing page.
+   * Seller cards on this page show store info directly (name, link, location, badge).
+   */
+  const SELLER_LISTING_SELECTORS = {
+    /** Seller card containers — the listing uses repeating card/item elements. */
+    sellerCard: 'div[class*="store-card"], div[class*="seller-card"], div[class*="merchant-card"], div[class*="shop-card"]',
+    /** Fallback: any container that holds a merchant link on the listing page. */
+    sellerCardFallback: 'div[class*="card"], li[class*="card"], a[class*="card"]',
+    /** Seller/store name element. */
+    sellerName: 'span[class*="store-name"], div[class*="store-name"], span[class*="seller-name"], div[class*="seller-name"], span[class*="merchant-name"], div[class*="merchant-name"]',
+    /** Seller location element. */
+    sellerLocation: 'span[class*="location"], div[class*="location"], span[class*="city"], div[class*="city"], span[class*="address"], div[class*="address"]',
+    /** Seller badge/type element. */
+    sellerBadge: 'span[class*="badge"], div[class*="badge"], img[class*="badge"], span[class*="official"], div[class*="official"]',
+    /** Pagination on seller listing pages. */
+    paginationNext: 'a[rel="next"], button[aria-label="Next"], a[aria-label="Next"], a[class*="next"], button[class*="next"]',
+    paginationContainer: 'nav[class*="pagination"], div[class*="pagination"], ul[class*="pagination"]',
+  };
+
+  /**
+   * Check if the current page is the `/semua-toko` seller listing page.
+   * @returns {boolean}
+   */
+  function isSellerListingPage() {
+    return window.location.pathname.includes('/semua-toko');
+  }
 
   // ── Utility Helpers ────────────────────────────────────────
 
@@ -152,6 +184,92 @@
       await sleep(SCROLL_DELAY_MS);
       attempts++;
     }
+  }
+
+  // ── CAPTCHA / Dialog Detection ────────────────────────────
+
+  /**
+   * Detect whether a CAPTCHA, verification dialog, or blocking overlay
+   * is currently visible on the page.
+   * @returns {boolean}
+   */
+  function detectCaptcha() {
+    // Strategy 1: look for elements whose class or id contains CAPTCHA-related keywords
+    const keywordSelectors = [
+      '[class*="captcha"]', '[id*="captcha"]',
+      '[class*="verify"]', '[id*="verify"]',
+      '[class*="challenge"]', '[id*="challenge"]',
+      '[class*="recaptcha"]', '[id*="recaptcha"]',
+    ];
+
+    for (const sel of keywordSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetParent !== null) {
+        return true;
+      }
+    }
+
+    // Strategy 2: look for visible modal / dialog overlays that block the page
+    const overlaySelectors = [
+      'div[class*="modal"][class*="overlay"]',
+      'div[class*="dialog"]',
+      'div[role="dialog"]',
+      'div[class*="overlay"][style*="z-index"]',
+    ];
+
+    for (const sel of overlaySelectors) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        if (el.offsetParent !== null) {
+          const text = (el.textContent || '').toLowerCase();
+          if (
+            text.includes('captcha') ||
+            text.includes('verify') ||
+            text.includes('verifikasi') ||
+            text.includes('robot') ||
+            text.includes('challenge')
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // Strategy 3: scan visible elements for tell-tale text content
+    const candidates = document.querySelectorAll(
+      'div, span, p, h1, h2, h3, h4, label'
+    );
+    const captchaTextPatterns = /\b(verify|verifikasi|robot|captcha)\b/i;
+
+    for (const el of candidates) {
+      if (el.children.length > 0) continue; // only check leaf nodes
+      if (el.offsetParent === null) continue; // skip hidden elements
+      const text = (el.textContent || '').trim();
+      if (text.length > 0 && text.length < 200 && captchaTextPatterns.test(text)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * If a CAPTCHA / verification dialog is detected, notify the service
+   * worker and poll every 3 seconds until the user resolves it.
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    if (!detectCaptcha()) return;
+
+    console.log('[SE-Blibli] CAPTCHA/dialog detected — waiting for user to solve it...');
+    chrome.runtime.sendMessage({ action: 'captchaDetected', platform: 'blibli' });
+
+    while (detectCaptcha()) {
+      await sleep(3000);
+    }
+
+    console.log('[SE-Blibli] CAPTCHA resolved, resuming...');
+    chrome.runtime.sendMessage({ action: 'captchaResolved', platform: 'blibli' });
   }
 
   // ── Extraction Logic ───────────────────────────────────────
@@ -505,6 +623,280 @@
     return null;
   }
 
+  // ── Seller Listing Extraction ──────────────────────────────
+
+  /**
+   * Find seller card elements on the `/semua-toko` listing page.
+   * Uses multiple strategies to locate seller/store cards.
+   * @returns {Element[]}
+   */
+  function findSellerCards() {
+    // Strategy 1: use known seller card selectors
+    let cards = document.querySelectorAll(SELLER_LISTING_SELECTORS.sellerCard);
+    if (cards.length > 0) return Array.from(cards);
+
+    // Strategy 2: use fallback card selectors, filtered to those with merchant links
+    cards = document.querySelectorAll(SELLER_LISTING_SELECTORS.sellerCardFallback);
+    const withMerchantLinks = Array.from(cards).filter(
+      (card) => card.querySelector('a[href*="/merchant/"]')
+    );
+    if (withMerchantLinks.length > 0) return withMerchantLinks;
+
+    // Strategy 3: find merchant links and walk up to discover card boundaries
+    const merchantLinks = document.querySelectorAll('a[href*="/merchant/"]');
+    const cardSet = new Set();
+
+    for (const link of merchantLinks) {
+      let el = link.parentElement;
+      let depth = 0;
+
+      while (el && depth < 8) {
+        if (el.parentElement) {
+          const siblings = el.parentElement.children;
+          let siblingMerchantLinks = 0;
+
+          for (const sib of siblings) {
+            if (sib !== el && sib.querySelector('a[href*="/merchant/"]')) {
+              siblingMerchantLinks++;
+            }
+          }
+
+          if (siblingMerchantLinks >= 2) {
+            cardSet.add(el);
+            break;
+          }
+        }
+
+        el = el.parentElement;
+        depth++;
+      }
+    }
+
+    return Array.from(cardSet);
+  }
+
+  /**
+   * Wait for seller cards to appear on the `/semua-toko` page.
+   * @param {number} [timeoutMs]
+   * @returns {Promise<boolean>}
+   */
+  function waitForSellerCards(timeoutMs = PAGE_LOAD_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      const check = () => {
+        const cards = findSellerCards();
+        if (cards.length > 0) return true;
+
+        // Fallback: look for any merchant links
+        const merchantLinks = document.querySelectorAll('a[href*="/merchant/"]');
+        return merchantLinks.length > 0;
+      };
+
+      if (check()) {
+        resolve(true);
+        return;
+      }
+
+      const observer = new MutationObserver(() => {
+        if (check()) {
+          observer.disconnect();
+          resolve(true);
+        }
+      });
+
+      observer.observe(document.body, { childList: true, subtree: true });
+
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(check());
+      }, timeoutMs);
+    });
+  }
+
+  /**
+   * Extract merchant data from a single seller card on the `/semua-toko` page.
+   * @param {Element} card
+   * @returns {{ name: string, url: string, location: string, isOfficial: boolean } | null}
+   */
+  function extractSellerCardInfo(card) {
+    let name = '';
+    let url = '';
+    let location = '';
+    let isOfficial = false;
+
+    // Extract name and URL from merchant links
+    const merchantLinks = card.querySelectorAll('a[href*="/merchant/"]');
+    for (const link of merchantLinks) {
+      const href = link.href;
+      if (isMerchantUrl(href)) {
+        url = normaliseMerchantUrl(href);
+
+        // Try seller name selectors first
+        const nameEl = card.querySelector(SELLER_LISTING_SELECTORS.sellerName);
+        if (nameEl) {
+          name = nameEl.textContent.trim();
+        }
+
+        // Fall back to the link text itself
+        if (!name) {
+          const inner = link.querySelector('span, div, p, h3, h4');
+          name = inner ? inner.textContent.trim() : link.textContent.trim();
+        }
+
+        if (name && name.length > 0 && name.length < 200) break;
+      }
+    }
+
+    if (!name || !url) return null;
+
+    // Extract location
+    const locEls = card.querySelectorAll(SELLER_LISTING_SELECTORS.sellerLocation);
+    for (const el of locEls) {
+      const text = el.textContent.trim();
+      if (text && text.length >= 2 && text.length <= 60) {
+        location = text;
+        break;
+      }
+    }
+
+    // Fallback location: look for short text elements near the merchant link
+    if (!location) {
+      const allText = card.querySelectorAll('span, div, p');
+      for (const el of allText) {
+        if (el.querySelector('a')) continue; // skip elements containing links
+        const text = el.textContent.trim();
+        if (
+          text.length >= 2 &&
+          text.length <= 40 &&
+          !text.includes('Rp') &&
+          !text.includes('%') &&
+          !text.match(/^\d+$/) &&
+          text !== name &&
+          el.children.length === 0
+        ) {
+          location = text;
+          break;
+        }
+      }
+    }
+
+    // Detect official store badge
+    const badgeEls = card.querySelectorAll(SELLER_LISTING_SELECTORS.sellerBadge);
+    for (const el of badgeEls) {
+      const text = (el.textContent || '').trim().toLowerCase();
+      const alt = (el.getAttribute('alt') || '').toLowerCase();
+      const src = (el.getAttribute('src') || '').toLowerCase();
+      if (
+        text.includes('official') ||
+        alt.includes('official') ||
+        src.includes('official') ||
+        src.includes('badge') ||
+        src.includes('verified')
+      ) {
+        isOfficial = true;
+        break;
+      }
+    }
+
+    // Additional official store check via innerHTML patterns
+    if (!isOfficial) {
+      isOfficial = isOfficialStore(card);
+    }
+
+    return { name, url, location, isOfficial };
+  }
+
+  /**
+   * Collect unique merchants from seller cards on the `/semua-toko`
+   * listing page.
+   * @param {Map<string, Object>} merchantMap — existing merchants (keyed by URL)
+   * @param {string} regionCode
+   * @param {string} regionName
+   */
+  function collectMerchantsFromSellerListing(merchantMap, regionCode, regionName) {
+    const cards = findSellerCards();
+
+    for (const card of cards) {
+      const info = extractSellerCardInfo(card);
+      if (!info || !info.name) continue;
+
+      const urlKey = info.url || info.name.toLowerCase();
+      if (merchantMap.has(urlKey)) continue;
+
+      merchantMap.set(urlKey, {
+        platform: 'blibli',
+        merchantName: info.name,
+        merchantUrl: info.url || '',
+        merchantId: extractMerchantSlug(info.url || ''),
+        address: info.location,
+        provinceCode: regionCode,
+        provinceName: regionName,
+        regencyCode: '',
+        regencyName: info.location || '',
+        districtCode: '',
+        districtName: '',
+        category: '',
+        rating: null,
+        totalProducts: null,
+        totalSold: null,
+        joinDate: '',
+        isOfficialStore: info.isOfficial,
+        phone: '',
+        description: '',
+        scrapedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  /**
+   * Navigate to the next page on the `/semua-toko` seller listing.
+   * @returns {boolean} true if navigation was triggered
+   */
+  function goToNextSellerListingPage() {
+    // Strategy 1: find a "next page" link/button
+    const nextBtn = document.querySelector(SELLER_LISTING_SELECTORS.paginationNext);
+    if (nextBtn) {
+      if (
+        nextBtn.disabled ||
+        nextBtn.getAttribute('aria-disabled') === 'true' ||
+        nextBtn.classList.contains('disabled')
+      ) {
+        return false;
+      }
+
+      nextBtn.click();
+      return true;
+    }
+
+    // Strategy 2: look for numbered pagination links
+    const paginationContainer = document.querySelector(SELLER_LISTING_SELECTORS.paginationContainer);
+    if (paginationContainer) {
+      const currentUrl = new URL(window.location.href);
+      const currentPage = parseInt(currentUrl.searchParams.get('page') || '1', 10);
+      const nextPageNum = currentPage + 1;
+
+      const allLinks = paginationContainer.querySelectorAll('a[href], button');
+      for (const link of allLinks) {
+        const text = link.textContent.trim();
+        if (text === String(nextPageNum)) {
+          link.click();
+          return true;
+        }
+      }
+    }
+
+    // Strategy 3: modify URL page parameter directly
+    const currentUrl = new URL(window.location.href);
+    const currentPage = parseInt(currentUrl.searchParams.get('page') || '1', 10);
+
+    if (document.querySelector(SELLER_LISTING_SELECTORS.paginationContainer)) {
+      currentUrl.searchParams.set('page', String(currentPage + 1));
+      window.location.href = currentUrl.toString();
+      return true;
+    }
+
+    return false;
+  }
+
   // ── Main Scraping Routine ──────────────────────────────────
 
   /**
@@ -541,7 +933,7 @@
         provinceCode: regionCode,
         provinceName: regionName,
         regencyCode: '',
-        regencyName: '',
+        regencyName: location || '',
         districtCode: '',
         districtName: '',
         category: '',
@@ -614,8 +1006,13 @@
   }
 
   /**
-   * Core scraping loop: scroll to load all products on current page,
+   * Core scraping loop: scroll to load all content on current page,
    * collect merchants, then paginate up to MAX_PAGES.
+   *
+   * Automatically detects whether we are on a `/semua-toko` seller
+   * listing page or a search/cari product page and uses the
+   * appropriate extraction logic.
+   *
    * @param {string} regionCode
    * @param {string} regionName
    * @returns {Promise<Object[]>}
@@ -623,48 +1020,88 @@
   async function scrapeAllPages(regionCode, regionName) {
     const merchantMap = new Map();
     let currentPage = 1;
+    const onSellerListing = isSellerListingPage();
+
+    if (onSellerListing) {
+      console.log('[SE-Blibli] Detected /semua-toko seller listing page.');
+    }
 
     while (currentPage <= MAX_PAGES) {
       console.log(
         `[SE-Blibli] Scraping page ${currentPage}/${MAX_PAGES}...`
       );
 
-      // Wait for product cards to appear on the page
-      const hasProducts = await waitForProducts(PAGE_LOAD_TIMEOUT_MS);
+      // Check for CAPTCHA before processing each page
+      await waitForCaptchaResolution();
 
-      if (!hasProducts) {
-        console.warn('[SE-Blibli] No products found on page, stopping.');
-        break;
-      }
+      if (onSellerListing) {
+        // ── Seller listing page flow ──────────────────────────
+        const hasCards = await waitForSellerCards(PAGE_LOAD_TIMEOUT_MS);
 
-      // Scroll to load lazy content
-      await scrollToBottom();
-
-      // Extra wait for lazy renders
-      await sleep(500);
-
-      // Collect merchants from current page
-      const previousCount = merchantMap.size;
-      collectMerchantsFromPage(merchantMap, regionCode, regionName);
-
-      const newCount = merchantMap.size - previousCount;
-      console.log(
-        `[SE-Blibli] Page ${currentPage}: found ${newCount} new merchants (total: ${merchantMap.size})`
-      );
-
-      // Attempt pagination
-      if (currentPage < MAX_PAGES) {
-        const navigated = goToNextPage();
-        if (!navigated) {
-          console.log('[SE-Blibli] No next page available, stopping.');
+        if (!hasCards) {
+          console.warn('[SE-Blibli] No seller cards found on page, stopping.');
           break;
         }
 
-        // Wait for navigation / new page to load
-        await sleep(NEXT_PAGE_DELAY_MS);
+        // Scroll to load lazy content
+        await scrollToBottom();
+        await sleep(500);
 
-        // Wait for new products to appear
-        await waitForProducts(PAGE_LOAD_TIMEOUT_MS);
+        // Collect merchants from seller cards
+        const previousCount = merchantMap.size;
+        collectMerchantsFromSellerListing(merchantMap, regionCode, regionName);
+
+        const newCount = merchantMap.size - previousCount;
+        console.log(
+          `[SE-Blibli] Page ${currentPage}: found ${newCount} new merchants (total: ${merchantMap.size})`
+        );
+
+        // Attempt pagination for seller listing
+        if (currentPage < MAX_PAGES) {
+          const navigated = goToNextSellerListingPage();
+          if (!navigated) {
+            console.log('[SE-Blibli] No next page available on seller listing, stopping.');
+            break;
+          }
+
+          await sleep(NEXT_PAGE_DELAY_MS);
+          await waitForCaptchaResolution();
+          await waitForSellerCards(PAGE_LOAD_TIMEOUT_MS);
+        }
+      } else {
+        // ── Product search page flow (original) ───────────────
+        const hasProducts = await waitForProducts(PAGE_LOAD_TIMEOUT_MS);
+
+        if (!hasProducts) {
+          console.warn('[SE-Blibli] No products found on page, stopping.');
+          break;
+        }
+
+        // Scroll to load lazy content
+        await scrollToBottom();
+        await sleep(500);
+
+        // Collect merchants from product cards
+        const previousCount = merchantMap.size;
+        collectMerchantsFromPage(merchantMap, regionCode, regionName);
+
+        const newCount = merchantMap.size - previousCount;
+        console.log(
+          `[SE-Blibli] Page ${currentPage}: found ${newCount} new merchants (total: ${merchantMap.size})`
+        );
+
+        // Attempt pagination
+        if (currentPage < MAX_PAGES) {
+          const navigated = goToNextPage();
+          if (!navigated) {
+            console.log('[SE-Blibli] No next page available, stopping.');
+            break;
+          }
+
+          await sleep(NEXT_PAGE_DELAY_MS);
+          await waitForCaptchaResolution();
+          await waitForProducts(PAGE_LOAD_TIMEOUT_MS);
+        }
       }
 
       currentPage++;

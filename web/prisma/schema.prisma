@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -20,7 +20,6 @@ enum Platform {
   gofood
   lazada
   blibli
-  zalora
 }
 
 enum ScrapeStatus {
@@ -36,44 +35,20 @@ enum UserRole {
 
 model Region {
   id        Int         @id @default(autoincrement())
-  code      String      @unique @db.VarChar(10)
-  name      String      @db.VarChar(255)
+  code      String      @unique
+  name      String
   level     RegionLevel
   parentId  Int?
   parent    Region?     @relation("RegionHierarchy", fields: [parentId], references: [id])
   children  Region[]    @relation("RegionHierarchy")
-  merchants Merchant[]
   sessions  ScrapeSession[]
 
   @@index([code, level])
   @@index([parentId])
 }
 
-model Merchant {
-  id                 Int      @id @default(autoincrement())
-  regionId           Int
-  region             Region   @relation(fields: [regionId], references: [id])
-  platform           Platform
-  name               String   @db.VarChar(500)
-  address            String?  @db.Text
-  category           String?  @db.VarChar(255)
-  phone              String?  @db.VarChar(50)
-  rating             Float?
-  productCount       Int?
-  joinDate           DateTime?
-  monthlySales       Int?
-  totalTransactions  Int?
-  operatingHours     String?  @db.VarChar(500)
-  socialMediaLinks   Json?
-  ownerName          String?  @db.VarChar(255)
-  sourceUrl          String?  @db.Text
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  @@index([regionId, platform])
-  @@index([platform])
-  @@index([createdAt])
-}
+// Merchant data is now stored in Parquet files (see src/lib/parquet.ts)
+// No longer using Prisma for merchant storage.
 
 model ScrapeSession {
   id             Int          @id @default(autoincrement())
@@ -93,9 +68,9 @@ model ScrapeSession {
 
 model User {
   id           Int             @id @default(autoincrement())
-  name         String          @db.VarChar(255)
-  email        String          @unique @db.VarChar(255)
-  passwordHash String          @db.VarChar(255)
+  name         String
+  email        String          @unique
+  passwordHash String
   role         UserRole        @default(staff)
   createdAt    DateTime        @default(now())
   sessions     ScrapeSession[]

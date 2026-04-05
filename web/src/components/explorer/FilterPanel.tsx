@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
 interface Region {
   id: number;
   code: string;
@@ -17,7 +25,6 @@ const PLATFORMS = [
   'gofood',
   'lazada',
   'blibli',
-  'zalora',
 ] as const;
 
 export interface FilterValues {
@@ -131,10 +138,8 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
     onApply(filters);
   }
 
-  const selectClass =
-    'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400';
   const inputClass =
-    'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+    'w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500';
   const labelClass = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500';
 
   return (
@@ -145,7 +150,7 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
         onClick={() => setIsOpen(!isOpen)}
         className="mb-4 flex w-full items-center justify-between rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm lg:hidden"
       >
-        <span>Filters</span>
+        <span>Filter</span>
         <svg
           className={`h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
@@ -161,18 +166,18 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
           isOpen ? 'block' : 'hidden'
         } w-full shrink-0 rounded-lg border border-gray-200 bg-white p-5 shadow-sm lg:block lg:w-72`}
       >
-        <h2 className="mb-4 text-base font-semibold text-gray-900">Filters</h2>
+        <h2 className="mb-4 text-base font-semibold text-gray-900">Filter</h2>
 
         <div className="space-y-4">
           {/* Search */}
           <div>
             <label htmlFor="filter-search" className={labelClass}>
-              Search Merchant
+              Cari Merchant
             </label>
             <input
               id="filter-search"
               type="text"
-              placeholder="Merchant name..."
+              placeholder="Nama merchant..."
               className={inputClass}
               value={filters.search}
               onChange={(e) =>
@@ -183,64 +188,79 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
 
           {/* Province */}
           <div>
-            <label htmlFor="filter-province" className={labelClass}>
-              Province
-            </label>
-            <select
-              id="filter-province"
-              className={selectClass}
-              value={filters.provinceCode}
-              onChange={handleProvinceChange}
+            <label className={labelClass}>Provinsi</label>
+            <Select
+              value={filters.provinceCode || '__all__'}
+              onValueChange={(val) => {
+                handleProvinceChange({
+                  target: { value: val === '__all__' ? '' : val },
+                } as React.ChangeEvent<HTMLSelectElement>);
+              }}
             >
-              <option value="">All Provinces</option>
-              {provinces.map((p) => (
-                <option key={p.id} value={p.code}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Semua Provinsi" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Provinsi</SelectItem>
+                {provinces.map((p) => (
+                  <SelectItem key={p.id} value={p.code}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Regency */}
           <div>
-            <label htmlFor="filter-regency" className={labelClass}>
-              Regency
-            </label>
-            <select
-              id="filter-regency"
-              className={selectClass}
-              value={filters.regencyCode}
-              onChange={handleRegencyChange}
+            <label className={labelClass}>Kabupaten/Kota</label>
+            <Select
+              value={filters.regencyCode || '__all__'}
+              onValueChange={(val) => {
+                handleRegencyChange({
+                  target: { value: val === '__all__' ? '' : val },
+                } as React.ChangeEvent<HTMLSelectElement>);
+              }}
               disabled={!filters.provinceCode}
             >
-              <option value="">All Regencies</option>
-              {regencies.map((r) => (
-                <option key={r.id} value={r.code}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Semua Kabupaten/Kota" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Kabupaten/Kota</SelectItem>
+                {regencies.map((r) => (
+                  <SelectItem key={r.id} value={r.code}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* District */}
           <div>
-            <label htmlFor="filter-district" className={labelClass}>
-              District
-            </label>
-            <select
-              id="filter-district"
-              className={selectClass}
-              value={filters.districtCode}
-              onChange={handleDistrictChange}
+            <label className={labelClass}>Kecamatan</label>
+            <Select
+              value={filters.districtCode || '__all__'}
+              onValueChange={(val) => {
+                handleDistrictChange({
+                  target: { value: val === '__all__' ? '' : val },
+                } as React.ChangeEvent<HTMLSelectElement>);
+              }}
               disabled={!filters.regencyCode}
             >
-              <option value="">All Districts</option>
-              {districts.map((d) => (
-                <option key={d.id} value={d.code}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Semua Kecamatan" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Kecamatan</SelectItem>
+                {districts.map((d) => (
+                  <SelectItem key={d.id} value={d.code}>
+                    {d.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Platforms */}
@@ -256,7 +276,7 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
                     type="checkbox"
                     checked={filters.platforms.includes(platform)}
                     onChange={() => handlePlatformToggle(platform)}
-                    className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
                   />
                   <span className="capitalize">{platform}</span>
                 </label>
@@ -267,12 +287,12 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
           {/* Category */}
           <div>
             <label htmlFor="filter-category" className={labelClass}>
-              Category
+              Kategori
             </label>
             <input
               id="filter-category"
               type="text"
-              placeholder="e.g. Electronics"
+              placeholder="cth. Elektronik"
               className={inputClass}
               value={filters.category}
               onChange={(e) =>
@@ -283,11 +303,11 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
 
           {/* Date Range */}
           <div>
-            <span className={labelClass}>Date Range</span>
+            <span className={labelClass}>Rentang Tanggal</span>
             <div className="mt-1 grid grid-cols-2 gap-2">
               <div>
                 <label htmlFor="filter-date-from" className="sr-only">
-                  From
+                  Dari
                 </label>
                 <input
                   id="filter-date-from"
@@ -301,7 +321,7 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
               </div>
               <div>
                 <label htmlFor="filter-date-to" className="sr-only">
-                  To
+                  Sampai
                 </label>
                 <input
                   id="filter-date-to"
@@ -321,14 +341,14 @@ export default function FilterPanel({ onApply }: FilterPanelProps) {
             <button
               type="button"
               onClick={handleApply}
-              className="flex-1 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="flex-1 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
             >
-              Apply
+              Terapkan
             </button>
             <button
               type="button"
               onClick={handleReset}
-              className="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              className="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
             >
               Reset
             </button>

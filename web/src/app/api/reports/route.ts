@@ -1,201 +1,117 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
-import { Prisma } from '@prisma/client';
 
-import { prisma } from '@/lib/prisma';
+import { readMerchants, type MerchantRecord } from '@/lib/parquet';
 
 type ReportTemplate = 'rekap-wilayah' | 'rekap-platform' | 'detail-merchant';
-
-interface RegionMerchantCount {
-  code: string;
-  name: string;
-  level: string;
-  count: bigint;
-}
-
-interface PlatformStat {
-  platform: string;
-  count: bigint;
-  avg_rating: number | null;
-  avg_products: number | null;
-  avg_monthly_sales: number | null;
-}
-
-interface MerchantWithRegion {
-  id: number;
-  name: string;
-  platform: string;
-  address: string | null;
-  category: string | null;
-  phone: string | null;
-  rating: number | null;
-  productCount: number | null;
-  monthlySales: number | null;
-  totalTransactions: number | null;
-  ownerName: string | null;
-  region: { id: number; code: string; name: string; level: string } | null;
-}
-
-function buildRegionWhere(
-  provinceCode: string | null,
-  regencyCode: string | null,
-  districtCode: string | null,
-): Prisma.MerchantWhereInput {
-  const where: Prisma.MerchantWhereInput = {};
-  if (districtCode) {
-    where.region = { code: districtCode };
-  } else if (regencyCode) {
-    where.region = { code: regencyCode };
-  } else if (provinceCode) {
-    where.region = { code: provinceCode };
-  }
-  return where;
-}
 
 async function getRekapWilayah(
   provinceCode: string | null,
   platform: string | null,
 ) {
-  const platformFilter = platform && platform !== 'all'
-    ? Prisma.sql`AND m.platform = ${platform}`
-    : Prisma.empty;
+  let merchants = await readMerchants();
 
-  if (provinceCode) {
-    // Show regency breakdown for a specific province
-    const rows = await prisma.$queryRaw<RegionMerchantCount[]>`
-      SELECT r2.code, r2.name, r2.level, COUNT(m.id) as count
-      FROM Region r
-      JOIN Region r2 ON r2.parentId = r.id
-      LEFT JOIN Merchant m ON m.regionId = r2.id ${platformFilter}
-      WHERE r.code = ${provinceCode} AND r.level = 'province'
-      GROUP BY r2.id, r2.code, r2.name, r2.level
-      ORDER BY count DESC
-    `;
-
-    return rows.map((r: RegionMerchantCount) => ({
-      code: r.code,
-      name: r.name,
-      level: r.level,
-      count: Number(r.count),
-    }));
+  if (platform && platform !== 'all') {
+    merchants = merchants.filter((m) => m.platform === platform);
   }
 
-  // Show province breakdown
-  const rows = await prisma.$queryRaw<RegionMerchantCount[]>`
-    SELECT r.code, r.name, r.level, COUNT(m.id) as count
-    FROM Region r
-    LEFT JOIN Merchant m ON m.regionId = r.id ${platformFilter}
-    WHERE r.level = 'province'
-    GROUP BY r.id, r.code, r.name, r.level
-    ORDER BY count DESC
-  `;
+  const countMap: Record<string, { code: string; name: string; level: string; count: number }> = {};
 
-  return rows.map((r: RegionMerchantCount) => ({
-    code: r.code,
-    name: r.name,
-    level: r.level,
-    count: Number(r.count),
-  }));
+  for (const m of merchants) {
+    if (provinceCode) {
+      if (m.provinceCode !== provinceCode) continue;
+      const key = m.regionCode;
+      if (!countMap[key]) {
+        countMap[key] = { code: m.regionCode, name: m.regionName, level: 'regency', count: 0 };
+      }
+      countMap[key].count++;
+    } else {
+      const key = m.provinceCode;
+      if (!countMap[key]) {
+        countMap[key] = { code: m.provinceCode, name: m.provinceName || m.provinceCode, level: 'province', count: 0 };
+      }
+      countMap[key].count++;
+    }
+  }
+
+  return Object.values(countMap).sort((a, b) => b.count - a.count);
 }
 
 async function getRekapPlatform(
   provinceCode: string | null,
-  regencyCode: string | null,
-  districtCode: string | null,
+  regionCode: string | null,
 ) {
-  const regionConditions: Prisma.Sql[] = [];
+  let merchants = await readMerchants();
 
-  if (districtCode) {
-    regionConditions.push(Prisma.sql`r.code = ${districtCode}`);
-  } else if (regencyCode) {
-    regionConditions.push(Prisma.sql`r.code = ${regencyCode}`);
+  if (regionCode) {
+    merchants = merchants.filter((m) => m.regionCode === regionCode);
   } else if (provinceCode) {
-    regionConditions.push(Prisma.sql`r.code = ${provinceCode}`);
+    merchants = merchants.filter((m) => m.provinceCode === provinceCode);
   }
 
-  const whereClause = regionConditions.length > 0
-    ? Prisma.sql`WHERE ${Prisma.join(regionConditions, ' AND ')}`
-    : Prisma.empty;
+  const stats: Record<string, { platform: string; count: number; ratings: number[]; products: number[]; sales: number[] }> = {};
 
-  const rows = await prisma.$queryRaw<PlatformStat[]>`
-    SELECT
-      m.platform,
-      COUNT(m.id) as count,
-      AVG(m.rating) as avg_rating,
-      AVG(m.productCount) as avg_products,
-      AVG(m.monthlySales) as avg_monthly_sales
-    FROM Merchant m
-    LEFT JOIN Region r ON m.regionId = r.id
-    ${whereClause}
-    GROUP BY m.platform
-    ORDER BY count DESC
-  `;
+  for (const m of merchants) {
+    if (!stats[m.platform]) {
+      stats[m.platform] = { platform: m.platform, count: 0, ratings: [], products: [], sales: [] };
+    }
+    stats[m.platform].count++;
+    if (m.rating !== null) stats[m.platform].ratings.push(m.rating);
+    if (m.productCount !== null) stats[m.platform].products.push(m.productCount);
+    if (m.monthlySales !== null) stats[m.platform].sales.push(m.monthlySales);
+  }
 
-  return rows.map((r: PlatformStat) => ({
-    platform: r.platform,
-    count: Number(r.count),
-    avgRating: r.avg_rating ? Number(Number(r.avg_rating).toFixed(2)) : null,
-    avgProducts: r.avg_products ? Math.round(Number(r.avg_products)) : null,
-    avgMonthlySales: r.avg_monthly_sales
-      ? Math.round(Number(r.avg_monthly_sales))
-      : null,
-  }));
+  return Object.values(stats)
+    .map((s) => ({
+      platform: s.platform,
+      count: s.count,
+      avgRating: s.ratings.length > 0 ? Number((s.ratings.reduce((a, b) => a + b, 0) / s.ratings.length).toFixed(2)) : null,
+      avgProducts: s.products.length > 0 ? Math.round(s.products.reduce((a, b) => a + b, 0) / s.products.length) : null,
+      avgMonthlySales: s.sales.length > 0 ? Math.round(s.sales.reduce((a, b) => a + b, 0) / s.sales.length) : null,
+    }))
+    .sort((a, b) => b.count - a.count);
 }
 
 async function getDetailMerchant(
   provinceCode: string | null,
-  regencyCode: string | null,
-  districtCode: string | null,
+  regionCode: string | null,
   platform: string | null,
 ) {
-  const where: Prisma.MerchantWhereInput = buildRegionWhere(
-    provinceCode,
-    regencyCode,
-    districtCode,
-  );
+  let merchants = await readMerchants();
 
-  if (platform && platform !== 'all') {
-    where.platform = platform as Prisma.EnumPlatformFilter['equals'];
+  if (regionCode) {
+    merchants = merchants.filter((m) => m.regionCode === regionCode);
+  } else if (provinceCode) {
+    merchants = merchants.filter((m) => m.provinceCode === provinceCode);
   }
 
-  const merchants = await prisma.merchant.findMany({
-    where,
-    include: {
-      region: {
-        select: { id: true, code: true, name: true, level: true },
-      },
-    },
-    orderBy: { name: 'asc' },
-    take: 5000,
-  });
+  if (platform && platform !== 'all') {
+    merchants = merchants.filter((m) => m.platform === platform);
+  }
 
-  return (merchants as MerchantWithRegion[]).map((m: MerchantWithRegion) => ({
-    id: m.id,
+  return merchants.slice(0, 5000).map((m: MerchantRecord) => ({
     name: m.name,
     platform: m.platform,
+    provinceName: m.provinceName,
+    regionName: m.regionName,
+    regionCode: m.regionCode,
+    sourceUrl: m.sourceUrl,
     address: m.address,
-    category: m.category,
-    phone: m.phone,
     rating: m.rating,
     productCount: m.productCount,
     monthlySales: m.monthlySales,
-    totalTransactions: m.totalTransactions,
-    ownerName: m.ownerName,
-    region: m.region?.name ?? '-',
-    regionCode: m.region?.code ?? '-',
   }));
 }
 
 function applyBpsHeaderStyle(row: ExcelJS.Row, colCount: number) {
   for (let i = 1; i <= colCount; i++) {
     const cell = row.getCell(i);
-    cell.font = { bold: true, size: 11, name: 'Arial' };
+    cell.font = { bold: true, size: 11, name: 'Arial', color: { argb: 'FFFFFFFF' } };
     cell.fill = {
       type: 'pattern',
       pattern: 'solid',
       fgColor: { argb: 'FF4472C4' },
     };
-    cell.font = { bold: true, size: 11, name: 'Arial', color: { argb: 'FFFFFFFF' } };
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = {
       top: { style: 'thin' },
@@ -234,7 +150,6 @@ async function generateExcel(
     properties: { defaultColWidth: 18 },
   });
 
-  // Title rows (BPS-style header block)
   const titleRow = sheet.addRow([title]);
   titleRow.font = { bold: true, size: 14, name: 'Arial' };
   const subtitleRow = sheet.addRow([
@@ -245,7 +160,7 @@ async function generateExcel(
     })}`,
   ]);
   subtitleRow.font = { size: 10, name: 'Arial', italic: true };
-  sheet.addRow([]); // Blank spacer
+  sheet.addRow([]);
 
   if (template === 'rekap-wilayah') {
     const columns = ['No', 'Kode Wilayah', 'Nama Wilayah', 'Jumlah Merchant'];
@@ -259,37 +174,21 @@ async function generateExcel(
 
     let total = 0;
     data.forEach((item, idx) => {
-      const row = sheet.addRow([
-        idx + 1,
-        item.code,
-        item.name,
-        item.count,
-      ]);
+      const row = sheet.addRow([idx + 1, item.code, item.name, item.count]);
       applyBpsDataStyle(row, columns.length);
       row.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
       total += (item.count as number) || 0;
     });
 
-    // Total row
     const totalRow = sheet.addRow(['', '', 'TOTAL', total]);
     for (let i = 1; i <= columns.length; i++) {
       const cell = totalRow.getCell(i);
       cell.font = { bold: true, size: 11, name: 'Arial' };
-      cell.border = {
-        top: { style: 'double' },
-        bottom: { style: 'double' },
-      };
+      cell.border = { top: { style: 'double' }, bottom: { style: 'double' } };
     }
     totalRow.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
   } else if (template === 'rekap-platform') {
-    const columns = [
-      'No',
-      'Platform',
-      'Jumlah Merchant',
-      'Rata-rata Rating',
-      'Rata-rata Produk',
-      'Rata-rata Penjualan/Bulan',
-    ];
+    const columns = ['No', 'Platform', 'Jumlah Merchant', 'Rata-rata Rating', 'Rata-rata Produk', 'Rata-rata Penjualan/Bulan'];
     const headerRow = sheet.addRow(columns);
     applyBpsHeaderStyle(headerRow, columns.length);
 
@@ -304,8 +203,7 @@ async function generateExcel(
     data.forEach((item, idx) => {
       const row = sheet.addRow([
         idx + 1,
-        String(item.platform).charAt(0).toUpperCase() +
-          String(item.platform).slice(1),
+        String(item.platform).charAt(0).toUpperCase() + String(item.platform).slice(1),
         item.count,
         item.avgRating ?? '-',
         item.avgProducts ?? '-',
@@ -322,80 +220,39 @@ async function generateExcel(
     for (let i = 1; i <= columns.length; i++) {
       const cell = totalRow.getCell(i);
       cell.font = { bold: true, size: 11, name: 'Arial' };
-      cell.border = {
-        top: { style: 'double' },
-        bottom: { style: 'double' },
-      };
+      cell.border = { top: { style: 'double' }, bottom: { style: 'double' } };
     }
   } else if (template === 'detail-merchant') {
-    const columns = [
-      'No',
-      'Nama Merchant',
-      'Platform',
-      'Wilayah',
-      'Alamat',
-      'Kategori',
-      'Telepon',
-      'Rating',
-      'Jumlah Produk',
-      'Penjualan/Bulan',
-      'Total Transaksi',
-      'Pemilik',
-    ];
+    const columns = ['No', 'Nama Merchant', 'Platform', 'Provinsi', 'Kab/Kota', 'Alamat', 'URL Merchant', 'Rating', 'Jumlah Produk', 'Penjualan/Bulan'];
     const headerRow = sheet.addRow(columns);
     applyBpsHeaderStyle(headerRow, columns.length);
 
     sheet.getColumn(1).width = 6;
     sheet.getColumn(2).width = 30;
     sheet.getColumn(3).width = 14;
-    sheet.getColumn(4).width = 25;
-    sheet.getColumn(5).width = 40;
-    sheet.getColumn(6).width = 20;
-    sheet.getColumn(7).width = 16;
+    sheet.getColumn(4).width = 22;
+    sheet.getColumn(5).width = 25;
+    sheet.getColumn(6).width = 35;
+    sheet.getColumn(7).width = 45;
     sheet.getColumn(8).width = 10;
     sheet.getColumn(9).width = 14;
     sheet.getColumn(10).width = 18;
-    sheet.getColumn(11).width = 16;
-    sheet.getColumn(12).width = 20;
 
     data.forEach((item, idx) => {
       const row = sheet.addRow([
-        idx + 1,
-        item.name,
-        String(item.platform).charAt(0).toUpperCase() +
-          String(item.platform).slice(1),
-        item.region,
-        item.address ?? '-',
-        item.category ?? '-',
-        item.phone ?? '-',
-        item.rating ?? '-',
-        item.productCount ?? '-',
-        item.monthlySales ?? '-',
-        item.totalTransactions ?? '-',
-        item.ownerName ?? '-',
+        idx + 1, item.name,
+        String(item.platform).charAt(0).toUpperCase() + String(item.platform).slice(1),
+        item.provinceName ?? '-', item.regionName ?? '-',
+        item.address ?? '-', item.sourceUrl ?? '-',
+        item.rating ?? '-', item.productCount ?? '-', item.monthlySales ?? '-',
       ]);
       applyBpsDataStyle(row, columns.length);
     });
 
-    // Summary row
-    const summaryRow = sheet.addRow([
-      '',
-      `Total: ${data.length} merchant`,
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-      '',
-    ]);
+    const summaryRow = sheet.addRow(['', `Total: ${data.length} merchant`, '', '', '', '', '', '', '', '', '', '']);
     summaryRow.getCell(2).font = { bold: true, size: 10, name: 'Arial', italic: true };
   }
 
-  // Footer
   sheet.addRow([]);
   const footerRow = sheet.addRow(['Sumber: Sensus Ekonomi - Merchant Scraper']);
   footerRow.font = { size: 9, name: 'Arial', italic: true };
@@ -410,29 +267,19 @@ function generateCsv(
 ): string {
   if (template === 'rekap-wilayah') {
     const header = 'No,Kode Wilayah,Nama Wilayah,Jumlah Merchant';
-    const rows = data.map(
-      (item, idx) =>
-        `${idx + 1},"${item.code}","${item.name}",${item.count}`,
-    );
+    const rows = data.map((item, idx) => `${idx + 1},"${item.code}","${item.name}",${item.count}`);
     return [header, ...rows].join('\n');
   }
 
   if (template === 'rekap-platform') {
-    const header =
-      'No,Platform,Jumlah Merchant,Rata-rata Rating,Rata-rata Produk,Rata-rata Penjualan/Bulan';
-    const rows = data.map(
-      (item, idx) =>
-        `${idx + 1},"${item.platform}",${item.count},${item.avgRating ?? ''},${item.avgProducts ?? ''},${item.avgMonthlySales ?? ''}`,
-    );
+    const header = 'No,Platform,Jumlah Merchant,Rata-rata Rating,Rata-rata Produk,Rata-rata Penjualan/Bulan';
+    const rows = data.map((item, idx) => `${idx + 1},"${item.platform}",${item.count},${item.avgRating ?? ''},${item.avgProducts ?? ''},${item.avgMonthlySales ?? ''}`);
     return [header, ...rows].join('\n');
   }
 
-  // detail-merchant
-  const header =
-    'No,Nama Merchant,Platform,Wilayah,Alamat,Kategori,Telepon,Rating,Jumlah Produk,Penjualan/Bulan,Total Transaksi,Pemilik';
-  const rows = data.map(
-    (item, idx) =>
-      `${idx + 1},"${item.name}","${item.platform}","${item.region}","${(item.address as string)?.replace(/"/g, '""') ?? ''}","${item.category ?? ''}","${item.phone ?? ''}",${item.rating ?? ''},${item.productCount ?? ''},${item.monthlySales ?? ''},${item.totalTransactions ?? ''},"${item.ownerName ?? ''}"`,
+  const header = 'No,Nama Merchant,Platform,Provinsi,Kab/Kota,Alamat,URL Merchant,Rating,Jumlah Produk,Penjualan/Bulan';
+  const rows = data.map((item, idx) =>
+    `${idx + 1},"${item.name}","${item.platform}","${item.provinceName ?? ''}","${item.regionName ?? ''}","${(item.address as string)?.replace(/"/g, '""') ?? ''}","${item.sourceUrl ?? ''}",${item.rating ?? ''},${item.productCount ?? ''},${item.monthlySales ?? ''}`,
   );
   return [header, ...rows].join('\n');
 }
@@ -443,10 +290,9 @@ export async function GET(request: NextRequest) {
 
     const template = searchParams.get('template') as ReportTemplate | null;
     const provinceCode = searchParams.get('provinceCode');
-    const regencyCode = searchParams.get('regencyCode');
-    const districtCode = searchParams.get('districtCode');
+    const regionCode = searchParams.get('regionCode');
     const platform = searchParams.get('platform');
-    const format = searchParams.get('format'); // 'xlsx', 'csv', or null (JSON)
+    const format = searchParams.get('format');
 
     if (!template) {
       return NextResponse.json(
@@ -455,11 +301,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const validTemplates: ReportTemplate[] = [
-      'rekap-wilayah',
-      'rekap-platform',
-      'detail-merchant',
-    ];
+    const validTemplates: ReportTemplate[] = ['rekap-wilayah', 'rekap-platform', 'detail-merchant'];
     if (!validTemplates.includes(template)) {
       return NextResponse.json(
         { error: `Invalid template. Must be one of: ${validTemplates.join(', ')}` },
@@ -473,21 +315,14 @@ export async function GET(request: NextRequest) {
     switch (template) {
       case 'rekap-wilayah':
         data = await getRekapWilayah(provinceCode, platform);
-        title = provinceCode
-          ? 'Rekap Merchant per Kabupaten/Kota'
-          : 'Rekap Merchant per Provinsi';
+        title = provinceCode ? 'Rekap Merchant per Kabupaten/Kota' : 'Rekap Merchant per Provinsi';
         break;
       case 'rekap-platform':
-        data = await getRekapPlatform(provinceCode, regencyCode, districtCode);
+        data = await getRekapPlatform(provinceCode, regionCode);
         title = 'Rekap Merchant per Platform';
         break;
       case 'detail-merchant':
-        data = await getDetailMerchant(
-          provinceCode,
-          regencyCode,
-          districtCode,
-          platform,
-        );
+        data = await getDetailMerchant(provinceCode, regionCode, platform);
         title = 'Detail Data Merchant';
         break;
       default:
@@ -498,11 +333,9 @@ export async function GET(request: NextRequest) {
     if (format === 'xlsx') {
       const buffer = await generateExcel(template, data, title);
       const filename = `${template}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-
       return new NextResponse(buffer as unknown as BodyInit, {
         headers: {
-          'Content-Type':
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'Content-Disposition': `attachment; filename="${filename}"`,
         },
       });
@@ -511,7 +344,6 @@ export async function GET(request: NextRequest) {
     if (format === 'csv') {
       const csv = generateCsv(template, data);
       const filename = `${template}_${new Date().toISOString().slice(0, 10)}.csv`;
-
       return new NextResponse(csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
@@ -520,7 +352,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Default: return JSON for preview
     return NextResponse.json({
       template,
       title,

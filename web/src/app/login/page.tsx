@@ -37,12 +37,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-[#0C2340] px-4">
       <div className="w-full max-w-sm">
-        <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
+        <div className="rounded-lg border border-gray-100 bg-white p-8 shadow-sm">
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-bold text-gray-900">
-              SE Merchant Scraper
+              Sensus Ekonomi 2026
             </h1>
             <p className="mt-1 text-sm text-gray-500">
               Login &mdash; Sensus Ekonomi
@@ -70,7 +70,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 autoComplete="email"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 placeholder="nama@email.com"
               />
             </div>
@@ -89,7 +89,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 placeholder="••••••••"
               />
             </div>
@@ -97,7 +97,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoading ? 'Memproses...' : 'Login'}
             </button>

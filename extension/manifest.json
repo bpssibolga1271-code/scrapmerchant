@@ -7,20 +7,22 @@
     "storage",
     "activeTab",
     "tabs",
-    "downloads"
+    "downloads",
+    "scripting",
+    "debugger"
   ],
   "host_permissions": [
     "https://sig.bps.go.id/*",
     "https://*.tokopedia.com/*",
     "https://*.shopee.co.id/*",
     "https://food.grab.com/*",
+    "https://portal.grab.com/*",
     "https://*.gofood.co.id/*",
     "https://*.lazada.co.id/*",
     "https://*.blibli.com/*",
-    "https://*.zalora.co.id/*"
+    "http://localhost/*"
   ],
   "action": {
-    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -30,7 +32,6 @@
   "background": {
     "service_worker": "background/service-worker.js"
   },
-  "options_page": "options/options.html",
   "content_scripts": [
     {
       "matches": ["https://www.tokopedia.com/*"],
@@ -41,6 +42,12 @@
       "matches": ["https://shopee.co.id/*"],
       "js": ["content-scripts/shopee.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://food.grab.com/*"],
+      "js": ["content-scripts/grabfood-interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     },
     {
       "matches": ["https://food.grab.com/*"],
@@ -60,11 +67,6 @@
     {
       "matches": ["https://www.blibli.com/*", "https://blibli.com/*"],
       "js": ["content-scripts/blibli.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://www.zalora.co.id/*", "https://*.zalora.co.id/*"],
-      "js": ["content-scripts/zalora.js"],
       "run_at": "document_idle"
     }
   ],

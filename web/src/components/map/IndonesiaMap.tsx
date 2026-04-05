@@ -106,19 +106,6 @@ const PLACEHOLDER_GEOJSON: FeatureCollection = {
   ],
 };
 
-const MOCK_DATA: ProvinceMapData[] = [
-  { provinceCode: '31', provinceName: 'DKI Jakarta', merchantCount: 3200 },
-  { provinceCode: '32', provinceName: 'Jawa Barat', merchantCount: 2800 },
-  { provinceCode: '33', provinceName: 'Jawa Tengah', merchantCount: 2100 },
-  { provinceCode: '35', provinceName: 'Jawa Timur', merchantCount: 2400 },
-  { provinceCode: '36', provinceName: 'Banten', merchantCount: 1600 },
-  { provinceCode: '12', provinceName: 'Sumatera Utara', merchantCount: 1200 },
-  { provinceCode: '73', provinceName: 'Sulawesi Selatan', merchantCount: 950 },
-  { provinceCode: '51', provinceName: 'Bali', merchantCount: 870 },
-  { provinceCode: '64', provinceName: 'Kalimantan Timur', merchantCount: 650 },
-  { provinceCode: '34', provinceName: 'DI Yogyakarta', merchantCount: 580 },
-];
-
 function getColor(count: number, maxCount: number): string {
   if (maxCount === 0) return '#f3f4f6';
   const intensity = count / maxCount;
@@ -137,10 +124,20 @@ function IndonesiaMapInner({ data }: IndonesiaMapProps) {
     setIsMounted(true);
   }, []);
 
-  const mapData = data.length > 0 ? data : MOCK_DATA;
-  const maxCount = Math.max(...mapData.map((d) => d.merchantCount), 1);
+  if (data.length === 0) {
+    return (
+      <div className="flex h-72 items-center justify-center">
+        <div className="text-center">
+          <p className="text-sm font-medium text-gray-400">Belum ada data</p>
+          <p className="mt-1 text-xs text-gray-300">Data akan muncul setelah scraping dilakukan</p>
+        </div>
+      </div>
+    );
+  }
 
-  const dataMap = new Map(mapData.map((d) => [d.provinceCode, d]));
+  const maxCount = Math.max(...data.map((d) => d.merchantCount), 1);
+
+  const dataMap = new Map(data.map((d) => [d.provinceCode, d]));
 
   function style(feature: Feature<Geometry, { name: string; code: string }> | undefined): PathOptions {
     const code = feature?.properties?.code ?? '';
@@ -189,8 +186,8 @@ function IndonesiaMapInner({ data }: IndonesiaMapProps) {
       scrollWheelZoom={false}
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+        url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
       />
       <GeoJSON
         data={PLACEHOLDER_GEOJSON}

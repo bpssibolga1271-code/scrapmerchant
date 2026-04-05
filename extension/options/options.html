@@ -9,8 +9,8 @@
 <body>
   <div class="container">
     <header class="header">
-      <h1>SE Merchant Scraper</h1>
-      <p>Pengaturan</p>
+      <h1>Sensus Ekonomi 2026</h1>
+      <p>SE Merchant Scraper &mdash; Pengaturan</p>
     </header>
 
     <!-- API Configuration -->
@@ -39,6 +39,35 @@
       </div>
 
       <p class="status-message hidden" id="status-message"></p>
+    </section>
+
+    <!-- Search Keywords -->
+    <section class="section">
+      <h2 class="section__title">Kata Kunci Pencarian Tokopedia</h2>
+
+      <div class="form-group">
+        <label for="input-keywords">Kata kunci (satu per baris)</label>
+        <textarea
+          id="input-keywords"
+          rows="6"
+          placeholder="shop&#10;store&#10;toko&#10;olshop&#10;grosir"
+        ></textarea>
+        <p class="form-group__hint">
+          Scraper akan mencari toko menggunakan setiap kata kunci secara bergiliran,
+          lalu menggabungkan hasilnya (duplikat otomatis dihapus).
+        </p>
+      </div>
+
+      <div class="button-row">
+        <button class="btn btn--secondary" id="btn-reset-keywords">
+          Reset Default
+        </button>
+        <button class="btn btn--primary" id="btn-save-keywords">
+          Simpan Kata Kunci
+        </button>
+      </div>
+
+      <p class="status-message hidden" id="keywords-status-message"></p>
     </section>
 
     <!-- Data Management -->

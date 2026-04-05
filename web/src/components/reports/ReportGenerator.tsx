@@ -1,6 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Region {
   id: number;
@@ -38,7 +45,6 @@ const PLATFORMS = [
   { value: 'gofood', label: 'GoFood' },
   { value: 'lazada', label: 'Lazada' },
   { value: 'blibli', label: 'Blibli' },
-  { value: 'zalora', label: 'Zalora' },
 ];
 
 interface ReportPreview {
@@ -172,8 +178,6 @@ export default function ReportGenerator() {
     }
   }
 
-  const selectClass =
-    'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400';
   const labelClass =
     'mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500';
 
@@ -193,18 +197,18 @@ export default function ReportGenerator() {
             <label htmlFor="report-template" className={labelClass}>
               Template Laporan
             </label>
-            <select
-              id="report-template"
-              className={selectClass}
-              value={template}
-              onChange={(e) => setTemplate(e.target.value as ReportTemplate)}
-            >
-              {TEMPLATES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+            <Select value={template} onValueChange={(val) => setTemplate(val as ReportTemplate)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Pilih Template" />
+              </SelectTrigger>
+              <SelectContent>
+                {TEMPLATES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {selectedTemplate && (
               <p className="mt-1 text-xs text-gray-500">
                 {selectedTemplate.description}
@@ -217,19 +221,19 @@ export default function ReportGenerator() {
             <label htmlFor="report-province" className={labelClass}>
               Provinsi
             </label>
-            <select
-              id="report-province"
-              className={selectClass}
-              value={provinceCode}
-              onChange={handleProvinceChange}
-            >
-              <option value="">Semua Provinsi</option>
-              {provinces.map((p) => (
-                <option key={p.id} value={p.code}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select value={provinceCode || '__all__'} onValueChange={(val) => { const event = { target: { value: val === '__all__' ? '' : val } }; handleProvinceChange(event as any); }}>
+              <SelectTrigger>
+                <SelectValue placeholder="Semua Provinsi" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Provinsi</SelectItem>
+                {provinces.map((p) => (
+                  <SelectItem key={p.id} value={p.code}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Regency */}
@@ -237,20 +241,19 @@ export default function ReportGenerator() {
             <label htmlFor="report-regency" className={labelClass}>
               Kabupaten/Kota
             </label>
-            <select
-              id="report-regency"
-              className={selectClass}
-              value={regencyCode}
-              onChange={handleRegencyChange}
-              disabled={!provinceCode}
-            >
-              <option value="">Semua Kabupaten/Kota</option>
-              {regencies.map((r) => (
-                <option key={r.id} value={r.code}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
+            <Select value={regencyCode || '__all__'} onValueChange={(val) => { const event = { target: { value: val === '__all__' ? '' : val } }; handleRegencyChange(event as any); }} disabled={!provinceCode}>
+              <SelectTrigger>
+                <SelectValue placeholder="Semua Kabupaten/Kota" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Kabupaten/Kota</SelectItem>
+                {regencies.map((r) => (
+                  <SelectItem key={r.id} value={r.code}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* District */}
@@ -258,20 +261,19 @@ export default function ReportGenerator() {
             <label htmlFor="report-district" className={labelClass}>
               Kecamatan
             </label>
-            <select
-              id="report-district"
-              className={selectClass}
-              value={districtCode}
-              onChange={handleDistrictChange}
-              disabled={!regencyCode}
-            >
-              <option value="">Semua Kecamatan</option>
-              {districts.map((d) => (
-                <option key={d.id} value={d.code}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <Select value={districtCode || '__all__'} onValueChange={(val) => { const event = { target: { value: val === '__all__' ? '' : val } }; handleDistrictChange(event as any); }} disabled={!regencyCode}>
+              <SelectTrigger>
+                <SelectValue placeholder="Semua Kecamatan" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Semua Kecamatan</SelectItem>
+                {districts.map((d) => (
+                  <SelectItem key={d.id} value={d.code}>
+                    {d.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Platform */}
@@ -279,18 +281,18 @@ export default function ReportGenerator() {
             <label htmlFor="report-platform" className={labelClass}>
               Platform
             </label>
-            <select
-              id="report-platform"
-              className={selectClass}
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-            >
-              {PLATFORMS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
+            <Select value={platform} onValueChange={(val) => setPlatform(val)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Semua Platform" />
+              </SelectTrigger>
+              <SelectContent>
+                {PLATFORMS.map((p) => (
+                  <SelectItem key={p.value} value={p.value}>
+                    {p.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -300,7 +302,7 @@ export default function ReportGenerator() {
             type="button"
             onClick={handleGenerate}
             disabled={isLoading}
-            className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-amber-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isLoading ? (
               <>
@@ -372,7 +374,7 @@ export default function ReportGenerator() {
                 type="button"
                 onClick={() => handleDownload('csv')}
                 disabled={isDownloading}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:opacity-50"
               >
                 <svg
                   className="h-4 w-4"
@@ -430,7 +432,7 @@ export default function ReportGenerator() {
                   {new Date(preview.generatedAt).toLocaleString('id-ID')}
                 </p>
               </div>
-              <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+              <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
                 {TEMPLATES.find((t) => t.value === preview.template)?.label}
               </span>
             </div>
@@ -631,25 +633,25 @@ function DetailMerchantTable({ data }: { data: Record<string, unknown>[] }) {
               Platform
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Wilayah
+              Provinsi
             </th>
             <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Kategori
+              Kab/Kota
+            </th>
+            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Alamat
+            </th>
+            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
+              URL Merchant
             </th>
             <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
               Rating
-            </th>
-            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Produk
-            </th>
-            <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-500">
-              Penjualan/Bln
             </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 bg-white">
           {previewData.map((item, idx) => (
-            <tr key={item.id as number} className="hover:bg-gray-50">
+            <tr key={idx} className="hover:bg-gray-50">
               <td className="whitespace-nowrap px-4 py-2.5 text-sm text-gray-500">
                 {idx + 1}
               </td>
@@ -660,23 +662,30 @@ function DetailMerchantTable({ data }: { data: Record<string, unknown>[] }) {
                 {String(item.platform)}
               </td>
               <td className="whitespace-nowrap px-4 py-2.5 text-sm text-gray-600">
-                {String(item.region)}
+                {item.provinceName ? String(item.provinceName) : '-'}
               </td>
-              <td className="max-w-[150px] truncate px-4 py-2.5 text-sm text-gray-600">
-                {item.category ? String(item.category) : '-'}
+              <td className="whitespace-nowrap px-4 py-2.5 text-sm text-gray-600">
+                {item.regionName ? String(item.regionName) : '-'}
+              </td>
+              <td className="max-w-[200px] truncate px-4 py-2.5 text-sm text-gray-600">
+                {item.address ? String(item.address) : '-'}
+              </td>
+              <td className="max-w-[250px] truncate px-4 py-2.5 text-sm text-blue-600">
+                {item.sourceUrl ? (
+                  <a
+                    href={String(item.sourceUrl)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline"
+                  >
+                    {String(item.sourceUrl)}
+                  </a>
+                ) : (
+                  <span className="text-gray-400">-</span>
+                )}
               </td>
               <td className="whitespace-nowrap px-4 py-2.5 text-right text-sm text-gray-600">
                 {item.rating != null ? String(item.rating) : '-'}
-              </td>
-              <td className="whitespace-nowrap px-4 py-2.5 text-right text-sm text-gray-600">
-                {item.productCount != null
-                  ? (item.productCount as number).toLocaleString('id-ID')
-                  : '-'}
-              </td>
-              <td className="whitespace-nowrap px-4 py-2.5 text-right text-sm text-gray-600">
-                {item.monthlySales != null
-                  ? (item.monthlySales as number).toLocaleString('id-ID')
-                  : '-'}
               </td>
             </tr>
           ))}

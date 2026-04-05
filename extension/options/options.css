@@ -1,5 +1,6 @@
 /* ===================================================
    SE Merchant Scraper — Options Page Styles
+   Matches popup's clean aesthetic: Navy + Amber
    =================================================== */
 
 * {
@@ -10,18 +11,19 @@
 
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   color: #1a1a1a;
-  background: #f5f5f5;
-  line-height: 1.6;
+  background: #f8f9fa;
+  line-height: 1.5;
+  min-height: 100vh;
 }
 
 .container {
-  max-width: 560px;
+  max-width: 480px;
   margin: 32px auto;
   background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.1);
   overflow: hidden;
 }
 
@@ -29,27 +31,36 @@ body {
    --------------------------------------------------- */
 
 .header {
-  background: linear-gradient(135deg, #1565c0, #0d47a1);
+  background: linear-gradient(135deg, #0C2340, #163a5f);
   color: #fff;
-  padding: 24px;
+  padding: 16px;
+  text-align: center;
 }
 
 .header h1 {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.header h1::before {
+  content: '\25C6';
+  color: #f59e0b;
+  margin-right: 4px;
+  font-size: 14px;
 }
 
 .header p {
-  font-size: 13px;
+  font-size: 11px;
   opacity: 0.85;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 /* Sections
    --------------------------------------------------- */
 
 .section {
-  padding: 20px 24px;
+  padding: 12px 16px;
   border-bottom: 1px solid #e0e0e0;
 }
 
@@ -58,49 +69,66 @@ body {
 }
 
 .section__title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: #546e7a;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 /* Forms
    --------------------------------------------------- */
 
 .form-group {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
 }
 
 .form-group label {
   display: block;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: #37474f;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .form-group input[type="url"],
-.form-group input[type="text"] {
+.form-group input[type="text"],
+.form-group textarea {
   width: 100%;
-  padding: 9px 12px;
+  padding: 7px 10px;
   border: 1px solid #cfd8dc;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: #263238;
+  font-family: inherit;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.form-group input:focus {
+.form-group textarea {
+  resize: vertical;
+  line-height: 1.5;
+  font-family: 'Cascadia Code', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
   outline: none;
-  border-color: #1565c0;
-  box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.15);
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
 }
 
 .form-group__hint {
   font-size: 11px;
   color: #78909c;
   margin-top: 4px;
+  line-height: 1.4;
 }
 
 /* Buttons
@@ -108,21 +136,22 @@ body {
 
 .button-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
+  margin-top: 8px;
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
+  padding: 7px 14px;
   border: none;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, opacity 0.15s;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
 }
 
 .btn:disabled {
@@ -130,61 +159,65 @@ body {
   cursor: not-allowed;
 }
 
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
 .btn--primary {
-  background: #1565c0;
+  background: #d97706;
   color: #fff;
 }
 
 .btn--primary:hover:not(:disabled) {
-  background: #0d47a1;
+  background: #b45309;
 }
 
 .btn--secondary {
-  background: #e8eaf6;
-  color: #283593;
-  border: 1px solid #c5cae9;
+  background: #0C2340;
+  color: #fff;
 }
 
 .btn--secondary:hover:not(:disabled) {
-  background: #c5cae9;
+  background: #163a5f;
 }
 
 .btn--danger {
-  background: #ffebee;
+  background: transparent;
   color: #c62828;
   border: 1px solid #ef9a9a;
 }
 
 .btn--danger:hover:not(:disabled) {
-  background: #ffcdd2;
+  background: #ffebee;
 }
 
 /* Status Message
    --------------------------------------------------- */
 
 .status-message {
-  margin-top: 12px;
-  padding: 8px 12px;
+  margin-top: 8px;
+  padding: 6px 10px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .status-message--success {
-  background: #e8f5e9;
-  color: #2e7d32;
-  border: 1px solid #a5d6a7;
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
 }
 
 .status-message--error {
-  background: #ffebee;
-  color: #c62828;
-  border: 1px solid #ef9a9a;
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
 }
 
 .status-message--info {
-  background: #e3f2fd;
-  color: #1565c0;
-  border: 1px solid #90caf9;
+  background: #fffbeb;
+  color: #92400e;
+  border: 1px solid #fde68a;
 }
 
 /* Utilities

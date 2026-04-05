@@ -35,9 +35,8 @@ const platformColors: Record<string, string> = {
   shopee: 'bg-orange-100 text-orange-700',
   grabfood: 'bg-emerald-100 text-emerald-700',
   gofood: 'bg-red-100 text-red-700',
-  lazada: 'bg-blue-100 text-blue-700',
+  lazada: 'bg-amber-100 text-amber-700',
   blibli: 'bg-indigo-100 text-indigo-700',
-  zalora: 'bg-pink-100 text-pink-700',
 };
 
 function formatDate(dateStr: string): string {
@@ -55,9 +54,9 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
   if (sessions.length === 0) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-        <h3 className="text-lg font-semibold text-gray-900">Recent Scrape Sessions</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Sesi Scraping Terkini</h3>
         <p className="mt-4 text-center text-sm text-gray-500">
-          No scrape sessions yet. Start a new scraping task to see results here.
+          Belum ada sesi scraping. Mulai scraping untuk melihat hasilnya di sini.
         </p>
       </div>
     );
@@ -66,16 +65,16 @@ export default function RecentSessions({ sessions }: RecentSessionsProps) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="border-b border-gray-200 px-6 py-4">
-        <h3 className="text-lg font-semibold text-gray-900">Recent Scrape Sessions</h3>
+        <h3 className="text-lg font-semibold text-gray-900">Sesi Scraping Terkini</h3>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              <th className="px-6 py-3 font-medium text-gray-500">Time</th>
+              <th className="px-6 py-3 font-medium text-gray-500">Waktu</th>
               <th className="px-6 py-3 font-medium text-gray-500">Platform</th>
-              <th className="px-6 py-3 font-medium text-gray-500">Region</th>
-              <th className="px-6 py-3 font-medium text-gray-500">Merchants</th>
+              <th className="px-6 py-3 font-medium text-gray-500">Wilayah</th>
+              <th className="px-6 py-3 font-medium text-gray-500">Merchant</th>
               <th className="px-6 py-3 font-medium text-gray-500">Status</th>
             </tr>
           </thead>

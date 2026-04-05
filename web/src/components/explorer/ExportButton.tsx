@@ -91,7 +91,8 @@ export default function ExportButton({ fetchAllData }: ExportButtonProps) {
       const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join(
         '\n',
       );
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const bom = '\uFEFF';
+      const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
       downloadBlob(blob, `merchants-${Date.now()}.csv`);
     } catch (err) {
       console.error('Export CSV failed:', err);
@@ -163,7 +164,7 @@ export default function ExportButton({ fetchAllData }: ExportButtonProps) {
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         disabled={isExporting}
-        className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-2 rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isExporting ? (
           <>
@@ -186,7 +187,7 @@ export default function ExportButton({ fetchAllData }: ExportButtonProps) {
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
               />
             </svg>
-            Exporting...
+            Mengekspor...
           </>
         ) : (
           <>
@@ -203,7 +204,7 @@ export default function ExportButton({ fetchAllData }: ExportButtonProps) {
                 d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
               />
             </svg>
-            Export
+            Ekspor
             <svg
               className={`h-3 w-3 transition-transform ${isOpen ? 'rotate-180' : ''}`}
               fill="none"
@@ -244,7 +245,7 @@ export default function ExportButton({ fetchAllData }: ExportButtonProps) {
             onClick={handleExportJSON}
             className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
           >
-            <span className="inline-block h-2 w-2 rounded-full bg-blue-500" />
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
             JSON (.json)
           </button>
         </div>

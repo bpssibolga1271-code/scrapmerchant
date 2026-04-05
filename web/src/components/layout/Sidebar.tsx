@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import { useState } from 'react';
 
 const navItems = [
   {
-    label: 'Dashboard',
+    label: 'Dasbor',
     href: '/dashboard',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -15,7 +16,7 @@ const navItems = [
     ),
   },
   {
-    label: 'Data Explorer',
+    label: 'Eksplorasi Data',
     href: '/dashboard/explorer',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -24,7 +25,7 @@ const navItems = [
     ),
   },
   {
-    label: 'Comparison',
+    label: 'Perbandingan',
     href: '/dashboard/comparison',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -33,7 +34,16 @@ const navItems = [
     ),
   },
   {
-    label: 'Reports',
+    label: 'Pencocokan',
+    href: '/dashboard/matching',
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+      </svg>
+    ),
+  },
+  {
+    label: 'Laporan',
     href: '/dashboard/reports',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -42,7 +52,7 @@ const navItems = [
     ),
   },
   {
-    label: 'Settings',
+    label: 'Pengaturan',
     href: '/settings',
     icon: (
       <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -62,10 +72,10 @@ export default function Sidebar() {
       {/* Mobile menu button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed left-4 top-4 z-50 rounded-md bg-white p-2 shadow-md lg:hidden"
+        className="fixed left-4 top-4 z-50 rounded-md bg-[#1A1A1A] p-2 shadow-md lg:hidden"
         aria-label="Toggle sidebar"
       >
-        <svg className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
           {isOpen ? (
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
           ) : (
@@ -84,18 +94,17 @@ export default function Sidebar() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-gray-200 bg-white transition-transform duration-200 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col bg-[#1A1A1A] transition-transform duration-200 lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         {/* Logo */}
-        <div className="flex h-16 items-center gap-2 border-b border-gray-200 px-6">
-          <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 21v-7.5a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 .75.75V21m-4.5 0H2.36m11.14 0H18m0 0h3.64m-1.39 0V9.349M3.75 21V9.349m0 0a3.001 3.001 0 0 0 3.75-.615A2.993 2.993 0 0 0 9.75 9.75c.896 0 1.7-.393 2.25-1.016a2.993 2.993 0 0 0 2.25 1.016c.896 0 1.7-.393 2.25-1.016A3.001 3.001 0 0 0 20.25 9.35m-16.5 0a3.004 3.004 0 0 1-.621-4.72l1.189-1.19A1.5 1.5 0 0 1 5.378 3h13.243a1.5 1.5 0 0 1 1.06.44l1.19 1.189a3 3 0 0 1-.621 4.72M6.75 18h3.75a.75.75 0 0 0 .75-.75V13.5a.75.75 0 0 0-.75-.75H6.75a.75.75 0 0 0-.75.75v3.75c0 .414.336.75.75.75Z" />
-          </svg>
+        <div className="flex h-16 items-center gap-2 border-b border-white/10 px-6">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-se2026.webp" alt="SE2026" width={32} height={32} className="h-8 w-8" />
           <div>
-            <h1 className="text-sm font-bold text-gray-900">SE Merchant</h1>
-            <p className="text-xs text-gray-500">Scraper Dashboard</p>
+            <h1 className="text-sm font-bold text-white">Sensus Ekonomi</h1>
+            <p className="text-xs text-gray-400">SE2026 Dashboard</p>
           </div>
         </div>
 
@@ -114,11 +123,11 @@ export default function Sidebar() {
                 onClick={() => setIsOpen(false)}
                 className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                    ? 'bg-white/10 text-[#E8852E]'
+                    : 'text-gray-300 hover:bg-white/10 hover:text-white'
                 }`}
               >
-                <span className={isActive ? 'text-blue-600' : 'text-gray-400'}>
+                <span className={isActive ? 'text-[#E8852E]' : 'text-gray-500'}>
                   {item.icon}
                 </span>
                 {item.label}
@@ -128,18 +137,19 @@ export default function Sidebar() {
         </nav>
 
         {/* User info at bottom */}
-        <div className="border-t border-gray-200 p-4">
+        <div className="border-t border-white/10 p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-sm font-medium text-blue-700">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#E8852E]/20 text-sm font-medium text-[#E8852E]">
               A
             </div>
             <div className="flex-1 min-w-0">
-              <p className="truncate text-sm font-medium text-gray-900">Admin</p>
-              <p className="truncate text-xs text-gray-500">admin@example.com</p>
+              <p className="truncate text-sm font-medium text-white">Admin</p>
+              <p className="truncate text-xs text-gray-400">admin@example.com</p>
             </div>
             <button
-              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              className="rounded-md p-1.5 text-gray-400 hover:bg-white/10 hover:text-white"
               title="Logout"
+              onClick={() => signOut({ callbackUrl: '/login' })}
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />

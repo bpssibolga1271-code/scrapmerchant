@@ -3,8 +3,8 @@
  *
  * Injected on tokopedia.com search pages. Listens for a
  * `startScrape` message from the service worker, extracts
- * unique merchant/seller data from product cards, and sends
- * results back via chrome.runtime.sendMessage.
+ * unique shop/merchant data from shop search cards (st=shop),
+ * and sends results back via chrome.runtime.sendMessage.
  */
 
 (function () {
@@ -17,21 +17,6 @@
   const PAGE_LOAD_TIMEOUT_MS = 15000;
   const MAX_SCROLL_ATTEMPTS = 20;
   const NEXT_PAGE_DELAY_MS = 2000;
-
-  // ── Selectors & Patterns ───────────────────────────────────
-
-  const SELECTORS = {
-    /** Main container holding all search result product cards. */
-    productsContainer: 'div[data-testid="divSRPContentProducts"]',
-    /** Individual product card wrapper. */
-    productCard: 'div[data-testid="master-product-card"]',
-    /** Fallback: any div that looks like a product card grid item. */
-    productCardFallback: 'div[data-testid="divSRPContentProducts"] > div',
-    /** Pagination next-page button. */
-    nextPageButton: 'nav[aria-label="Halaman berikutnya"], button[aria-label="Halaman berikutnya"]',
-    /** Alternative pagination: next page link. */
-    nextPageLink: 'a[data-testid="btnShopProductPageNext"]',
-  };
 
   // ── Utility Helpers ────────────────────────────────────────
 
@@ -77,7 +62,7 @@
 
   /**
    * Smooth-scroll to the bottom of the page in steps to
-   * trigger lazy-loading of additional product cards.
+   * trigger lazy-loading of additional shop cards.
    * @returns {Promise<void>}
    */
   async function scrollToBottom() {
@@ -88,7 +73,6 @@
       const currentHeight = document.documentElement.scrollHeight;
 
       if (currentHeight === previousHeight) {
-        // No new content loaded — we are likely at the bottom
         break;
       }
 
@@ -99,59 +83,108 @@
     }
   }
 
-  // ── Extraction Logic ───────────────────────────────────────
+  // ── CAPTCHA / Dialog Detection ────────────────────────────
 
   /**
-   * Determine whether a URL points to a Tokopedia shop page (not a
-   * product page, category page, or internal link).
-   * @param {string} href
+   * Detect whether a CAPTCHA, verification dialog, or challenge
+   * overlay is currently visible on the page.
    * @returns {boolean}
    */
-  function isShopUrl(href) {
-    if (!href) return false;
+  function detectCaptcha() {
+    // 1. Elements whose class or id contain CAPTCHA-related keywords
+    const keywordSelectors = [
+      '[class*="captcha"]', '[id*="captcha"]',
+      '[class*="Captcha"]', '[id*="Captcha"]',
+      '[class*="verify"]',  '[id*="verify"]',
+      '[class*="Verify"]',  '[id*="Verify"]',
+      '[class*="challenge"]', '[id*="challenge"]',
+      '[class*="Challenge"]', '[id*="Challenge"]',
+      '[class*="recaptcha"]', '[id*="recaptcha"]',
+      '[class*="reCAPTCHA"]', '[id*="reCAPTCHA"]',
+    ];
 
-    try {
-      const url = new URL(href, 'https://www.tokopedia.com');
-
-      // Exclude known non-shop paths
-      const nonShopPaths = [
-        '/discovery',
-        '/search',
-        '/p/',
-        '/promo',
-        '/help',
-        '/about',
-        '/careers',
-        '/blog',
-        '/find/',
-        '/hot/',
-        '/categories',
-        '/top-up',
-        '/pulsa',
-        '/tiket',
-        '/saldo',
-        '/feed',
-        '/tokopoints',
-        '/affiliate',
-      ];
-
-      const pathname = url.pathname.toLowerCase();
-
-      for (const prefix of nonShopPaths) {
-        if (pathname.startsWith(prefix)) return false;
-      }
-
-      // A shop URL is tokopedia.com/{shopname} — one path segment, no sub-paths
-      // Product URLs look like tokopedia.com/{shopname}/{product-slug}
-      const segments = pathname.split('/').filter(Boolean);
-      return segments.length === 1 && /^[a-zA-Z0-9_-]+$/.test(segments[0]);
-    } catch {
-      return false;
+    for (const sel of keywordSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetParent !== null) return true;
     }
+
+    // 2. Modal / dialog overlays — divs with very high z-index covering the viewport
+    const allDivs = document.querySelectorAll('div');
+    for (const div of allDivs) {
+      const style = window.getComputedStyle(div);
+      const zIndex = parseInt(style.zIndex, 10);
+      if (
+        zIndex >= 9999 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        div.offsetWidth >= window.innerWidth * 0.5 &&
+        div.offsetHeight >= window.innerHeight * 0.5
+      ) {
+        return true;
+      }
+    }
+
+    // 3. Iframes containing captcha sources
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      const src = (iframe.getAttribute('src') || '').toLowerCase();
+      if (
+        src.includes('captcha') ||
+        src.includes('recaptcha') ||
+        src.includes('challenge') ||
+        src.includes('verify')
+      ) {
+        return true;
+      }
+    }
+
+    // 4. Any visible element whose text matches verification keywords
+    const textKeywords = /\b(verify|verifikasi|robot|captcha)\b/i;
+    const candidates = document.querySelectorAll(
+      'h1, h2, h3, h4, h5, p, span, label, div[role="dialog"], div[role="alertdialog"]'
+    );
+    for (const el of candidates) {
+      if (
+        el.offsetParent !== null &&
+        textKeywords.test(el.textContent)
+      ) {
+        // Avoid false positives from very large containers whose
+        // descendants happen to include the keyword
+        if (el.textContent.length < 300) return true;
+      }
+    }
+
+    return false;
   }
 
   /**
-   * Extract the shop name (slug) from a shop URL.
+   * If a CAPTCHA / verification dialog is on screen, notify the
+   * service worker, then poll every 3 seconds until it is gone.
+   * Resolves once the CAPTCHA has been cleared.
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    if (!detectCaptcha()) return;
+
+    console.log('[SE-Tokopedia] CAPTCHA/dialog detected — waiting for user to solve it...');
+    chrome.runtime.sendMessage({ action: 'captchaDetected', platform: 'tokopedia' });
+
+    return new Promise((resolve) => {
+      const interval = setInterval(() => {
+        if (!detectCaptcha()) {
+          clearInterval(interval);
+          console.log('[SE-Tokopedia] CAPTCHA resolved, resuming...');
+          chrome.runtime.sendMessage({ action: 'captchaResolved', platform: 'tokopedia' });
+          resolve();
+        }
+      }, 3000);
+    });
+  }
+
+  // ── Shop Card Extraction ───────────────────────────────────
+
+  /**
+   * Extract the shop slug from a Tokopedia shop URL.
    * @param {string} href
    * @returns {string}
    */
@@ -166,99 +199,381 @@
   }
 
   /**
-   * Attempt to find the seller/shop link within a product card element.
-   * Strategy:
-   *   1. Look for an <a> whose href is a shop URL (one-segment path)
-   *   2. Fallback: look for the shop name element by data-testid
-   * @param {Element} card
-   * @returns {{ name: string, url: string } | null}
+   * Find the shop search results container on the page.
+   * Tries multiple selectors since Tokopedia may change structure.
+   * @returns {Element|null}
    */
-  function extractShopInfo(card) {
-    // Strategy 1: Find <a> tags with shop-level URLs
-    const links = card.querySelectorAll('a[href]');
+  function findSearchContainer() {
+    // Primary: the shop search results container
+    return (
+      document.querySelector('div[data-testid="divSRPContentProducts"]') ||
+      document.querySelector('div[data-testid="shopSRPContent"]') ||
+      document.querySelector('#srp_component_content') ||
+      document.querySelector('.search-container') ||
+      // Fallback: main content area
+      document.querySelector('main') ||
+      document.querySelector('#zeus-root')
+    );
+  }
 
-    for (const link of links) {
-      const href = link.href;
-      if (isShopUrl(href)) {
-        const name = link.textContent.trim();
-        if (name) {
-          return {
+  /**
+   * Extract shop cards from the current page.
+   * On the shop search page (st=shop), each result is a shop card
+   * containing the shop name, location, URL, and reputation badge.
+   * @returns {Array<{name: string, url: string, location: string, isOfficial: boolean, reputationImg: string}>}
+   */
+  function extractShopCards() {
+    const shops = [];
+
+    // Strategy 1: Look for shop card links with data-testid
+    const shopCards = document.querySelectorAll(
+      'div[data-testid="divShopCard"], div[data-testid="master-product-card"], div[data-testid="divSRPContentProducts"] > div'
+    );
+
+    if (shopCards.length > 0) {
+      for (const card of shopCards) {
+        const shopInfo = extractShopInfoFromCard(card);
+        if (shopInfo) shops.push(shopInfo);
+      }
+    }
+
+    // Strategy 2: If no cards found via data-testid, look for shop links structurally
+    if (shops.length === 0) {
+      const allLinks = document.querySelectorAll('a[href*="tokopedia.com/"]');
+      const seen = new Set();
+
+      for (const link of allLinks) {
+        const href = link.href || '';
+        if (!href) continue;
+
+        try {
+          const url = new URL(href);
+          if (url.hostname !== 'www.tokopedia.com') continue;
+
+          const segments = url.pathname.split('/').filter(Boolean);
+          // Shop URLs have exactly 1 segment (the shop slug)
+          if (segments.length !== 1) continue;
+
+          const slug = segments[0];
+          // Skip known non-shop paths
+          const skipPaths = [
+            'search', 'discovery', 'promo', 'help', 'about', 'careers',
+            'blog', 'categories', 'feed', 'tokopoints', 'affiliate',
+            'hot', 'top-up', 'pulsa', 'tiket', 'saldo', 'p', 'find',
+            'terms', 'privacy', 'cod', 'partner', 'daftar-halaman',
+            'mobile-apps', 'perlindungan-kekayaan-intelektual',
+            'register', 'login', 'settings', 'cart', 'wishlist',
+            'order-list', 'people', 'review', 'shop', 'seller', 'ta',
+            'events', 'seru', 'play', 'official-store', 'bebas-ongkir',
+            'kejar-diskon', 'now', 'gopay', 'plus', 'mitra', 'b2b',
+            'affiliate-program',
+          ];
+          if (skipPaths.includes(slug.toLowerCase())) continue;
+          if (seen.has(slug)) continue;
+          seen.add(slug);
+
+          // Filter out links inside footer, header, nav, or sidebar regions
+          if (link.closest('footer, header, nav, [class*="footer"], [class*="Footer"], [class*="header"], [class*="Header"], [class*="nav" i], [class*="sidebar"], [class*="bottomNav"]')) continue;
+
+          // Get the closest container that might be a card
+          const container = link.closest('div[class]') || link.parentElement;
+
+          // Try structural extraction first (name/location as separate child divs)
+          let name = '';
+          let location = '';
+          const wrapper = findContentWrapper(link);
+          if (wrapper) {
+            const childDivs = Array.from(wrapper.children).filter(
+              el => el.tagName === 'DIV'
+            );
+            if (childDivs.length >= 1) name = childDivs[0].textContent.trim();
+            if (childDivs.length >= 2) location = childDivs[1].textContent.trim();
+          }
+
+          // Fallback to old extraction
+          if (!name) name = extractShopNameFromLink(link, container);
+          if (!name || name.length < 2) continue;
+          if (!location) location = extractLocationFromContainer(container);
+
+          const isOfficial = checkOfficialBadge(container);
+
+          shops.push({
             name,
-            url: href.split('?')[0], // strip query params
-          };
+            url: `https://www.tokopedia.com/${slug}`,
+            location,
+            isOfficial,
+            reputationImg: '',
+          });
+        } catch {
+          // skip malformed URLs
         }
       }
     }
 
-    // Strategy 2: Look for data-testid based shop elements
-    const shopEl =
-      card.querySelector('[data-testid="linkProductShopName"]') ||
-      card.querySelector('[data-testid="shopName"]') ||
-      card.querySelector('span[data-testid*="shop"]');
+    return shops;
+  }
 
-    if (shopEl) {
-      const anchor = shopEl.closest('a') || shopEl.querySelector('a');
-      const name = shopEl.textContent.trim();
-      const url = anchor ? anchor.href.split('?')[0] : '';
+  /**
+   * Extract shop info from a single card element.
+   * @param {Element} card
+   * @returns {{name: string, url: string, location: string, isOfficial: boolean, reputationImg: string}|null}
+   */
+  function extractShopInfoFromCard(card) {
+    // Find shop link — look for anchor with shop-level URL
+    const links = card.querySelectorAll('a[href]');
+    let shopLink = null;
+    let shopUrl = '';
 
-      if (name) {
-        return { name, url };
-      }
-    }
-
-    // Strategy 3: Look for links structurally — shop links typically
-    // appear after price but before the location element. We look for
-    // the shortest non-product link text that looks like a shop name.
     for (const link of links) {
-      const href = link.href;
-      if (!href || !href.includes('tokopedia.com/')) continue;
-
+      const href = link.href || '';
       try {
         const url = new URL(href);
+        if (url.hostname !== 'www.tokopedia.com') continue;
         const segments = url.pathname.split('/').filter(Boolean);
-
-        // Product pages have >=2 segments, shops have exactly 1
-        if (segments.length === 1) {
-          const text = link.textContent.trim();
-          if (text && text.length > 0 && text.length < 100) {
-            return {
-              name: text,
-              url: `https://www.tokopedia.com/${segments[0]}`,
-            };
+        if (segments.length === 1 && /^[a-zA-Z0-9_-]+$/.test(segments[0])) {
+          const slug = segments[0].toLowerCase();
+          const skipPaths = [
+            'search', 'discovery', 'promo', 'help', 'about', 'careers',
+            'blog', 'categories', 'feed', 'tokopoints', 'affiliate',
+            'hot', 'top-up', 'pulsa', 'tiket', 'saldo', 'p', 'find',
+            'terms', 'privacy', 'cod', 'partner', 'daftar-halaman',
+            'mobile-apps', 'perlindungan-kekayaan-intelektual',
+            'register', 'login', 'settings', 'cart', 'wishlist',
+            'order-list', 'people', 'review', 'shop', 'seller', 'ta',
+            'events', 'seru', 'play', 'official-store', 'bebas-ongkir',
+            'kejar-diskon', 'now', 'gopay', 'plus', 'mitra', 'b2b',
+            'affiliate-program',
+          ];
+          if (!skipPaths.includes(slug)) {
+            shopLink = link;
+            shopUrl = `https://www.tokopedia.com/${segments[0]}`;
+            break;
           }
         }
       } catch {
-        // skip malformed URLs
+        // skip
       }
     }
 
+    if (!shopLink && !shopUrl) return null;
+
+    // ── Structural extraction (verified via Playwright 2026-03-08) ──
+    // Tokopedia shop card link structure:
+    //   <a href="/shop-slug">
+    //     <img/>                   ← shop avatar
+    //     <div>                    ← content wrapper
+    //       <div>Shop Name</div>  ← first child div = name
+    //       <div>Location</div>   ← second child div = location
+    //       <img/>                ← reputation badge
+    //     </div>
+    //     <button>Lihat Toko</button>
+    //   </a>
+    let name = '';
+    let location = '';
+
+    const contentWrapper = findContentWrapper(shopLink);
+    if (contentWrapper) {
+      const childDivs = Array.from(contentWrapper.children).filter(
+        el => el.tagName === 'DIV'
+      );
+      if (childDivs.length >= 1) name = childDivs[0].textContent.trim();
+      if (childDivs.length >= 2) location = childDivs[1].textContent.trim();
+    }
+
+    // Fallback: use old extraction if structural approach fails
+    if (!name) {
+      location = extractLocationFromContainer(card);
+      name = extractShopNameFromLink(shopLink, card, location);
+    }
+
+    if (!name || name.length < 2) return null;
+
+    const isOfficial = checkOfficialBadge(card);
+
+    let reputationImg = '';
+    const badgeImgs = card.querySelectorAll('img');
+    for (const img of badgeImgs) {
+      const src = (img.getAttribute('src') || '').toLowerCase();
+      const alt = (img.getAttribute('alt') || '').toLowerCase();
+      if (
+        src.includes('badge') ||
+        src.includes('reputation') ||
+        alt.includes('badge') ||
+        alt.includes('reputation')
+      ) {
+        reputationImg = img.getAttribute('src') || '';
+        break;
+      }
+    }
+
+    return { name, url: shopUrl, location, isOfficial, reputationImg };
+  }
+
+  /**
+   * Find the content wrapper div inside a shop card link.
+   * The verified DOM structure (Playwright 2026-03-08):
+   *   <a> → <img>(avatar) + <div>(wrapper) + <button>(Lihat Toko)
+   * The wrapper contains: <div>(name) + <div>(location) + <img>(reputation)
+   */
+  function findContentWrapper(link) {
+    if (!link) return null;
+    for (const child of link.children) {
+      if (child.tagName === 'DIV') {
+        const hasChildDivs = Array.from(child.children).some(
+          el => el.tagName === 'DIV'
+        );
+        if (hasChildDivs) return child;
+      }
+    }
     return null;
   }
 
   /**
-   * Extract seller location text from a product card.
-   * Location is usually a small text element showing a city name.
-   * @param {Element} card
+   * Clean a raw shop name string by removing garbage suffixes and text.
+   * @param {string} raw
    * @returns {string}
    */
-  function extractLocation(card) {
-    // Strategy 1: data-testid based
+  function cleanShopName(raw, locationText) {
+    if (!raw) return '';
+
+    let name = raw.trim();
+
+    // Remove trailing "Lihat Toko" and variations
+    name = name.replace(/\s*Lihat Toko\s*/gi, '');
+
+    // Remove common garbage phrases
+    const garbagePhrases = [
+      'Promo khusus aplikasi',
+      'Gratis Ongkir',
+      'Bebas Ongkir',
+      'Top Up',
+      'Banyak Promo',
+      'belanja di aplikasi',
+    ];
+    for (const phrase of garbagePhrases) {
+      name = name.replace(new RegExp(`\\s*${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*`, 'gi'), '');
+    }
+
+    // If we know the location text from the card, strip it from the name
+    // This is the primary fix: location text (e.g. "Kab. Morowali", "Palu")
+    // often gets concatenated with the shop name during DOM text extraction.
+    if (locationText && locationText.length > 1) {
+      const escaped = locationText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Strip if it appears at the end of the name
+      name = name.replace(new RegExp(`\\s*${escaped}\\s*$`, 'i'), '');
+      // Also strip with common prefixes
+      name = name.replace(new RegExp(`\\s+(Kota|Kab\\.|Kabupaten)\\s+${escaped}\\s*$`, 'i'), '');
+    }
+
+    // Remove location text that gets appended to shop names
+    // Common patterns: "ShopName Kota Palu", "ShopName Kab. Morowali"
+    name = name.replace(/\s+(Kota|Kab\.|Kabupaten)\s+[A-Z][a-zA-Z\s.-]*$/g, '');
+
+    // If the name is still too long (>80 chars), it likely has concatenated
+    // card text — try to cut before a city name pattern
+    if (name.length > 80) {
+      const cityPattern = /([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*)\s*$/;
+      const match = name.match(cityPattern);
+      if (match && match.index && match.index > 5) {
+        name = name.substring(0, match.index).trim();
+      }
+    }
+
+    // Final length guard
+    if (name.length > 80) {
+      name = name.substring(0, 80).trim();
+    }
+
+    return name.trim();
+  }
+
+  function extractShopNameFromLink(link, container, locationText) {
+    if (!link && !container) return '';
+
+    // Try data-testid based shop name elements first (most reliable)
+    if (container) {
+      const shopNameEl =
+        container.querySelector('[data-testid="linkProductShopName"]') ||
+        container.querySelector('[data-testid="shopName"]') ||
+        container.querySelector('[data-testid="spnShopName"]') ||
+        container.querySelector('span[data-testid*="shop"]');
+
+      if (shopNameEl) {
+        // Use only the direct text of the element, not children's text
+        // to avoid picking up location text from sibling elements
+        let text = '';
+        for (const node of shopNameEl.childNodes) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            text += node.textContent;
+          }
+        }
+        text = text.trim();
+        // If direct text is empty, use textContent but clean it
+        if (!text) text = shopNameEl.textContent.trim();
+        text = cleanShopName(text, locationText);
+        if (text && text.length > 1) return text;
+      }
+    }
+
+    // Try the link text — but only use direct text content to avoid
+    // concatenating location/badge text that are children of the link
+    if (link) {
+      // First try: only direct text nodes of the link
+      let directText = '';
+      for (const node of link.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          directText += node.textContent;
+        }
+      }
+      directText = directText.trim();
+
+      if (directText && directText.length > 1 && directText.length <= 80) {
+        return cleanShopName(directText, locationText);
+      }
+
+      // Second try: look for a child span/div that holds just the shop name
+      const nameChild = link.querySelector('span, div, b, strong');
+      if (nameChild) {
+        const childText = cleanShopName(nameChild.textContent, locationText);
+        if (childText && childText.length > 1 && childText.length <= 80) {
+          return childText;
+        }
+      }
+
+      // Last resort: full link text
+      const text = cleanShopName(link.textContent, locationText);
+      if (text && text.length > 1 && text.length <= 80) {
+        return text;
+      }
+    }
+
+    return link ? cleanShopName(link.textContent, locationText) : '';
+  }
+
+  /**
+   * Extract location text from a container element.
+   * @param {Element} container
+   * @returns {string}
+   */
+  function extractLocationFromContainer(container) {
+    if (!container) return '';
+
+    // Strategy 1: data-testid based location elements
     const locEl =
-      card.querySelector('[data-testid="linkProductShopLocation"]') ||
-      card.querySelector('[data-testid="shopLocation"]') ||
-      card.querySelector('span[data-testid*="location"]') ||
-      card.querySelector('span[data-testid*="Location"]');
+      container.querySelector('[data-testid="linkProductShopLocation"]') ||
+      container.querySelector('[data-testid="shopLocation"]') ||
+      container.querySelector('[data-testid="spnShopLocation"]') ||
+      container.querySelector('span[data-testid*="location"]') ||
+      container.querySelector('span[data-testid*="Location"]');
 
     if (locEl) {
       return locEl.textContent.trim();
     }
 
-    // Strategy 2: Look for small text elements near the bottom of the card
-    // Location text is typically short (city name) and appears after shop name
-    const spans = card.querySelectorAll('span');
+    // Strategy 2: Look for small text elements that look like city names
+    const spans = container.querySelectorAll('span');
     for (const span of spans) {
       const text = span.textContent.trim();
-      // Location text is typically a city name: short, no special chars
       if (
         text.length > 2 &&
         text.length < 40 &&
@@ -266,20 +581,15 @@
         !text.includes('%') &&
         !text.includes('terjual') &&
         !text.includes('rating') &&
+        !text.includes('produk') &&
+        !text.includes('Produk') &&
         span.closest('a') === null
       ) {
-        // Check if this looks like an Indonesian city — simple heuristic
         const parent = span.parentElement;
         if (parent) {
           const parentText = parent.textContent.trim();
-          // Location elements are usually standalone (not wrapped in long text)
           if (parentText === text || parentText.length < text.length + 10) {
-            // Additional check: see if sibling or adjacent element is the shop name
-            const prevSibling = span.previousElementSibling;
-            const parentPrev = parent.previousElementSibling;
-            if (prevSibling || parentPrev) {
-              return text;
-            }
+            return text;
           }
         }
       }
@@ -289,35 +599,36 @@
   }
 
   /**
-   * Detect if a product card indicates the seller is an Official Store.
-   * @param {Element} card
+   * Check if a container has an official store badge.
+   * @param {Element} container
    * @returns {boolean}
    */
-  function isOfficialStore(card) {
+  function checkOfficialBadge(container) {
+    if (!container) return false;
+
     // Check for official store badge via data-testid
     const badge =
-      card.querySelector('[data-testid="imgProductShopBadge"]') ||
-      card.querySelector('[data-testid="shopBadge"]') ||
-      card.querySelector('img[alt*="Official"]') ||
-      card.querySelector('img[alt*="official"]');
+      container.querySelector('[data-testid="imgProductShopBadge"]') ||
+      container.querySelector('[data-testid="shopBadge"]') ||
+      container.querySelector('img[alt*="Official"]') ||
+      container.querySelector('img[alt*="official"]');
 
     if (badge) {
-      const alt = badge.getAttribute('alt') || '';
-      if (alt.toLowerCase().includes('official')) return true;
-      // If the badge image source contains "official", it is an official store
-      const src = badge.getAttribute('src') || '';
-      if (src.toLowerCase().includes('official')) return true;
+      const alt = (badge.getAttribute('alt') || '').toLowerCase();
+      if (alt.includes('official')) return true;
+      const src = (badge.getAttribute('src') || '').toLowerCase();
+      if (src.includes('official')) return true;
     }
 
-    // Check for textual "Official Store" labels
-    const labels = card.querySelectorAll('span, div, p');
+    // Check for textual labels
+    const labels = container.querySelectorAll('span, div, p');
     for (const el of labels) {
       const text = el.textContent.trim().toLowerCase();
       if (text === 'official store' || text === 'os') return true;
     }
 
-    // Check for official store image badges (common Tokopedia pattern)
-    const images = card.querySelectorAll('img');
+    // Check badge images
+    const images = container.querySelectorAll('img');
     for (const img of images) {
       const alt = (img.getAttribute('alt') || '').toLowerCase();
       const src = (img.getAttribute('src') || '').toLowerCase();
@@ -334,133 +645,85 @@
     return false;
   }
 
-  /**
-   * Extract rating value from a product card if available.
-   * @param {Element} card
-   * @returns {number|null}
-   */
-  function extractRating(card) {
-    const ratingEl =
-      card.querySelector('[data-testid="imgProductRating"]') ||
-      card.querySelector('img[alt*="rating"]') ||
-      card.querySelector('span[aria-label*="rating"]');
-
-    if (ratingEl) {
-      const ariaLabel = ratingEl.getAttribute('aria-label') || '';
-      const match = ariaLabel.match(/([\d.]+)/);
-      if (match) return parseFloat(match[1]);
-    }
-
-    // Try to find a rating number near a star icon
-    const spans = card.querySelectorAll('span');
-    for (const span of spans) {
-      const text = span.textContent.trim();
-      const ratingMatch = text.match(/^(\d+\.?\d*)$/);
-      if (ratingMatch) {
-        const val = parseFloat(ratingMatch[1]);
-        if (val >= 1 && val <= 5) {
-          // Confirm it is near a star icon (sibling or parent has star)
-          const parent = span.parentElement;
-          if (parent) {
-            const hasStar =
-              parent.querySelector('img[alt*="star"]') ||
-              parent.querySelector('img[src*="star"]') ||
-              parent.querySelector('svg');
-            if (hasStar) return val;
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Extract the product category text from a product card if present.
-   * @param {Element} card
-   * @returns {string}
-   */
-  function extractCategory(card) {
-    const catEl =
-      card.querySelector('[data-testid="lblProductCategory"]') ||
-      card.querySelector('[data-testid="productCategory"]');
-
-    if (catEl) {
-      return catEl.textContent.trim();
-    }
-
-    return '';
-  }
-
-  /**
-   * Extract sold count from a product card if available.
-   * Tokopedia shows "XX terjual" on product cards.
-   * @param {Element} card
-   * @returns {number|null}
-   */
-  function extractSoldCount(card) {
-    const spans = card.querySelectorAll('span');
-    for (const span of spans) {
-      const text = span.textContent.trim().toLowerCase();
-      const match = text.match(/([\d.]+)\+?\s*(?:rb\+?\s*)?terjual/);
-      if (match) {
-        let count = parseFloat(match[1].replace(/\./g, ''));
-        // "rb" means ribu (thousand)
-        if (text.includes('rb')) count *= 1000;
-        return count;
-      }
-    }
-    return null;
-  }
-
   // ── Main Scraping Routine ──────────────────────────────────
 
   /**
-   * Collect unique merchants from all product cards currently
+   * Collect unique merchants from all shop cards currently
    * visible on the page.
    * @param {Map<string, Object>} merchantMap — existing merchants (keyed by URL)
    * @param {string} regionCode
    * @param {string} regionName
+   * @param {Object} region — full region hierarchy
    */
-  function collectMerchantsFromPage(merchantMap, regionCode, regionName) {
-    const cards =
-      document.querySelectorAll(SELECTORS.productCard).length > 0
-        ? document.querySelectorAll(SELECTORS.productCard)
-        : document.querySelectorAll(SELECTORS.productCardFallback);
+  function collectMerchantsFromPage(merchantMap, regionCode, regionName, region) {
+    const shopCards = extractShopCards();
 
-    for (const card of cards) {
-      const shopInfo = extractShopInfo(card);
-      if (!shopInfo || !shopInfo.name) continue;
+    // Blacklisted terms that indicate a non-shop link was picked up
+    const blacklistedTerms = [
+      'syarat', 'ketentuan', 'kebijakan', 'privasi', 'tokopedia',
+      'gratis ongkir', 'promo', 'top up', 'tagihan', 'hak kekayaan',
+    ];
+
+    // Expanded skip slugs for URL re-validation
+    const skipSlugs = new Set([
+      'search', 'discovery', 'promo', 'help', 'about', 'careers',
+      'blog', 'categories', 'feed', 'tokopoints', 'affiliate',
+      'hot', 'top-up', 'pulsa', 'tiket', 'saldo', 'p', 'find',
+      'terms', 'privacy', 'cod', 'partner', 'daftar-halaman',
+      'mobile-apps', 'perlindungan-kekayaan-intelektual',
+      'register', 'login', 'settings', 'cart', 'wishlist',
+      'order-list', 'people', 'review', 'shop', 'seller', 'ta',
+      'events', 'seru', 'play', 'official-store', 'bebas-ongkir',
+      'kejar-diskon', 'now', 'gopay', 'plus', 'mitra', 'b2b',
+      'affiliate-program',
+    ]);
+
+    for (const shop of shopCards) {
+      if (!shop.name) continue;
+
+      // Validate merchant name — reject if it contains blacklisted terms
+      const nameLower = shop.name.toLowerCase();
+      if (blacklistedTerms.some((term) => nameLower.includes(term))) continue;
+
+      // Reject names that are still too long after cleaning
+      if (shop.name.length > 80) continue;
+
+      // Re-validate the URL slug against known non-shop paths
+      if (shop.url) {
+        const slug = extractShopSlug(shop.url).toLowerCase();
+        if (skipSlugs.has(slug)) continue;
+      }
 
       // Build a canonical URL key for deduplication
-      const urlKey = shopInfo.url || shopInfo.name.toLowerCase();
-
+      const urlKey = shop.url || shop.name.toLowerCase();
       if (merchantMap.has(urlKey)) continue;
 
-      const location = extractLocation(card);
-      const official = isOfficialStore(card);
-      const rating = extractRating(card);
-      const category = extractCategory(card);
-      const totalSold = extractSoldCount(card);
+      // Use the location text from the card as regencyName when no
+      // specific regency was selected in the popup. Tokopedia shows
+      // regency/city names (e.g. "Parigi", "Sigi", "Palu") under
+      // each shop card — this is more accurate than leaving it blank.
+      const cardLocation = (shop.location || '').trim();
+      const regencyName = region?.regency?.name || cardLocation;
+      const regencyCode = region?.regency?.code || '';
 
       merchantMap.set(urlKey, {
         platform: 'tokopedia',
-        merchantName: shopInfo.name,
-        merchantUrl: shopInfo.url || '',
-        merchantId: extractShopSlug(shopInfo.url || ''),
-        address: location,
-        provinceCode: regionCode,
-        provinceName: regionName,
-        regencyCode: '',
-        regencyName: '',
-        districtCode: '',
-        districtName: '',
-        category: category,
-        rating: rating,
+        merchantName: shop.name,
+        merchantUrl: shop.url || '',
+        merchantId: extractShopSlug(shop.url || ''),
+        address: shop.location,
+        provinceCode: region?.province?.code || regionCode,
+        provinceName: region?.province?.name || regionName,
+        regencyCode: regencyCode,
+        regencyName: regencyName,
+        districtCode: region?.district?.code || '',
+        districtName: region?.district?.name || '',
+        category: '',
+        rating: null,
         totalProducts: null,
-        totalSold: totalSold,
+        totalSold: null,
         joinDate: '',
-        isOfficialStore: official,
+        isOfficialStore: shop.isOfficial,
         phone: '',
         description: '',
         scrapedAt: new Date().toISOString(),
@@ -478,11 +741,10 @@
     const nextBtn =
       document.querySelector('button[aria-label="Laman berikutnya"]') ||
       document.querySelector('button[aria-label="Halaman berikutnya"]') ||
-      document.querySelector(SELECTORS.nextPageLink) ||
+      document.querySelector('a[data-testid="btnShopProductPageNext"]') ||
       document.querySelector('nav[role="navigation"] a:last-child');
 
     if (nextBtn) {
-      // Verify the button is not disabled
       if (
         nextBtn.disabled ||
         nextBtn.getAttribute('aria-disabled') === 'true' ||
@@ -513,41 +775,44 @@
   }
 
   /**
-   * Core scraping loop: scroll to load all products on current page,
+   * Core scraping loop: scroll to load all shops on current page,
    * collect merchants, then paginate up to MAX_PAGES.
    * @param {string} regionCode
    * @param {string} regionName
+   * @param {Object} region — full region hierarchy
    * @returns {Promise<Object[]>}
    */
-  async function scrapeAllPages(regionCode, regionName) {
+  async function scrapeAllPages(regionCode, regionName, region) {
     const merchantMap = new Map();
     let currentPage = 1;
+
+    // Wait for initial content to render
+    const container = await waitForElement(
+      'div[data-testid="divSRPContentProducts"], div[data-testid="shopSRPContent"], #srp_component_content, main',
+      PAGE_LOAD_TIMEOUT_MS
+    );
+
+    if (!container) {
+      console.warn('[SE-Tokopedia] Search container not found, trying to scrape anyway.');
+    }
+
+    // Check for CAPTCHA before starting the scrape
+    await waitForCaptchaResolution();
 
     while (currentPage <= MAX_PAGES) {
       console.log(
         `[SE-Tokopedia] Scraping page ${currentPage}/${MAX_PAGES}...`
       );
 
-      // Wait for the product container to appear
-      const container = await waitForElement(
-        SELECTORS.productsContainer,
-        PAGE_LOAD_TIMEOUT_MS
-      );
-
-      if (!container) {
-        console.warn('[SE-Tokopedia] Product container not found, stopping.');
-        break;
-      }
-
       // Scroll to load lazy content
       await scrollToBottom();
 
       // Small extra wait for any remaining lazy renders
-      await sleep(500);
+      await sleep(1000);
 
       // Collect merchants from current page
       const previousCount = merchantMap.size;
-      collectMerchantsFromPage(merchantMap, regionCode, regionName);
+      collectMerchantsFromPage(merchantMap, regionCode, regionName, region);
 
       const newCount = merchantMap.size - previousCount;
       console.log(
@@ -565,8 +830,14 @@
         // Wait for navigation / new page to load
         await sleep(NEXT_PAGE_DELAY_MS);
 
-        // Wait for the new page's product container
-        await waitForElement(SELECTORS.productsContainer, PAGE_LOAD_TIMEOUT_MS);
+        // Check for CAPTCHA after page navigation
+        await waitForCaptchaResolution();
+
+        // Wait for new content to appear
+        await waitForElement(
+          'div[data-testid="divSRPContentProducts"], div[data-testid="shopSRPContent"], #srp_component_content, main',
+          PAGE_LOAD_TIMEOUT_MS
+        );
       }
 
       currentPage++;
@@ -586,13 +857,13 @@
       return false;
     }
 
-    const { regionCode, regionName } = message;
+    const { regionCode, regionName, region } = message;
 
     console.log(
       `[SE-Tokopedia] Received startScrape for region ${regionCode} (${regionName})`
     );
 
-    scrapeAllPages(regionCode, regionName)
+    scrapeAllPages(regionCode, regionName, region)
       .then((merchants) => {
         sendResponse({ success: true, merchants });
       })

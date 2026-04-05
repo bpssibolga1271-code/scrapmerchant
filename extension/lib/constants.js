@@ -35,11 +35,6 @@ const PLATFORMS = {
     domain: 'blibli.com',
     color: '#0095da',
   },
-  zalora: {
-    name: 'Zalora',
-    domain: 'zalora.co.id',
-    color: '#000000',
-  },
 };
 
 const BPS_API_BASE = 'https://sig.bps.go.id/rest-bridging/getwilayah';
@@ -67,9 +62,13 @@ const MERCHANT_FIELDS = [
   'scrapedAt',
 ];
 
+const DEFAULT_SEARCH_KEYWORDS = ['shop', 'store', 'toko', 'olshop', 'grosir'];
+
 const STORAGE_KEYS = {
   regionsCache: 'regions_cache',
   scrapedData: 'scraped_data',
   apiUrl: 'api_url',
   scrapeSessions: 'scrape_sessions',
+  scrapeState: 'scrape_state',
+  searchKeywords: 'search_keywords',
 };

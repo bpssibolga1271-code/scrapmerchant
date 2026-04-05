@@ -22,6 +22,32 @@
   const MAX_SCROLL_ATTEMPTS = 15;
   const PAGE_LOAD_TIMEOUT_MS = 15000;
 
+  // ── Intercepted API Data Store ─────────────────────────────
+  // Collects merchant data from the MAIN-world fetch interceptor
+  // (grabfood-interceptor.js) which captures search/recommended
+  // API responses with lat/lng for each merchant.
+  const interceptedMerchants = new Map();
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window) return;
+
+    if (
+      event.data?.type === 'SE_GRABFOOD_SEARCH_DATA' ||
+      event.data?.type === 'SE_GRABFOOD_RECOMMENDED_DATA'
+    ) {
+      const merchants = event.data.merchants || [];
+      for (const m of merchants) {
+        if (m.id) {
+          interceptedMerchants.set(String(m.id), m);
+        }
+      }
+      console.log(
+        `[SE-GrabFood] Received ${merchants.length} merchants from interceptor ` +
+        `(total cached: ${interceptedMerchants.size})`
+      );
+    }
+  });
+
   // ── Selectors & Patterns ───────────────────────────────────
 
   const SELECTORS = {
@@ -99,6 +125,121 @@
       window.scrollTo({ top: currentHeight, behavior: 'smooth' });
       await sleep(SCROLL_DELAY_MS);
       attempts++;
+    }
+  }
+
+  // ── CAPTCHA / Dialog Detection ────────────────────────────
+
+  /**
+   * Detect whether a CAPTCHA, verification dialog, or challenge overlay
+   * is currently visible on the page.
+   * @returns {boolean} true if a CAPTCHA or blocking dialog is detected
+   */
+  function detectCaptcha() {
+    // Strategy 1: Elements with CAPTCHA-related class or id attributes
+    const captchaSelectors = [
+      '[class*="captcha" i]',
+      '[id*="captcha" i]',
+      '[class*="verify" i]',
+      '[id*="verify" i]',
+      '[class*="challenge" i]',
+      '[id*="challenge" i]',
+      '[class*="recaptcha" i]',
+      '[id*="recaptcha" i]',
+    ];
+
+    for (const selector of captchaSelectors) {
+      try {
+        const el = document.querySelector(selector);
+        if (el && isElementVisible(el)) {
+          console.log(`[SE-GrabFood] CAPTCHA element detected via selector: ${selector}`);
+          return true;
+        }
+      } catch {
+        // Selector may be invalid, skip
+      }
+    }
+
+    // Strategy 2: Modal/dialog overlays blocking the page
+    const overlaySelectors = [
+      '[class*="modal" i][class*="overlay" i]',
+      '[class*="dialog" i]',
+      '[role="dialog"]',
+      '[class*="overlay" i][style*="z-index"]',
+      '[class*="backdrop" i]',
+    ];
+
+    for (const selector of overlaySelectors) {
+      try {
+        const els = document.querySelectorAll(selector);
+        for (const el of els) {
+          if (!isElementVisible(el)) continue;
+          const text = el.textContent.toLowerCase();
+          if (
+            text.includes('verify') ||
+            text.includes('verifikasi') ||
+            text.includes('robot') ||
+            text.includes('captcha')
+          ) {
+            console.log(`[SE-GrabFood] CAPTCHA overlay detected via selector: ${selector}`);
+            return true;
+          }
+        }
+      } catch {
+        // Skip invalid selectors
+      }
+    }
+
+    // Strategy 3: Any visible element whose text matches verification keywords
+    const allElements = document.querySelectorAll('h1, h2, h3, h4, p, span, div, label');
+    for (const el of allElements) {
+      if (el.children.length > 0) continue; // leaf nodes only
+      if (!isElementVisible(el)) continue;
+
+      const text = el.textContent.trim().toLowerCase();
+      if (
+        text.length > 2 &&
+        text.length < 200 &&
+        (text.includes('verify') ||
+          text.includes('verifikasi') ||
+          text.includes('robot') ||
+          text.includes('captcha'))
+      ) {
+        console.log(`[SE-GrabFood] CAPTCHA text detected: "${el.textContent.trim()}"`);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * If a CAPTCHA is detected, notify the extension and poll until
+   * the user resolves it before continuing.
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    if (!detectCaptcha()) return;
+
+    console.log('[SE-GrabFood] CAPTCHA/dialog detected — waiting for user to solve it...');
+
+    try {
+      chrome.runtime.sendMessage({ action: 'captchaDetected', platform: 'grabfood' });
+    } catch {
+      // Message sending may fail if service worker is inactive, continue anyway
+    }
+
+    // Poll every 3 seconds until the CAPTCHA is gone
+    while (detectCaptcha()) {
+      await sleep(3000);
+    }
+
+    console.log('[SE-GrabFood] CAPTCHA resolved, resuming...');
+
+    try {
+      chrome.runtime.sendMessage({ action: 'captchaResolved', platform: 'grabfood' });
+    } catch {
+      // Ignore send errors
     }
   }
 
@@ -217,7 +358,9 @@
       merchantName: name,
       merchantUrl,
       merchantId: String(id),
-      address: address + (lat && lng ? ` (${lat}, ${lng})` : ''),
+      address: address,
+      latitude: lat ? parseFloat(lat) : null,
+      longitude: lng ? parseFloat(lng) : null,
       provinceCode: regionCode,
       provinceName: regionName,
       regencyCode: '',
@@ -330,6 +473,8 @@
       merchantUrl: href ? href.split('?')[0] : '',
       merchantId: merchantId,
       address,
+      latitude: null,
+      longitude: null,
       provinceCode: regionCode,
       provinceName: regionName,
       regencyCode: '',
@@ -376,6 +521,8 @@
       merchantUrl: href.split('?')[0],
       merchantId: merchantId,
       address: '',
+      latitude: null,
+      longitude: null,
       provinceCode: regionCode,
       provinceName: regionName,
       regencyCode: '',
@@ -475,6 +622,117 @@
     );
   }
 
+  // ── Geolocation Detection ─────────────────────────────────
+
+  /**
+   * Detect the city/address GrabFood is currently showing results for.
+   *
+   * GrabFood is GPS/geolocation-based only — there is no URL parameter
+   * to control the delivery location. The page header typically shows
+   * a delivery address or city name. This function attempts to extract
+   * that text so we can report WHERE the results are actually from,
+   * regardless of which region was requested.
+   *
+   * @returns {string} detected city/address text, or empty string if not found
+   */
+  function detectCurrentCity() {
+    // Strategy 1: Look for elements with address-related class names in
+    // the header/nav area (GrabFood shows "Delivering to: [address]")
+    const addressSelectors = [
+      'header [class*="address" i]',
+      'nav [class*="address" i]',
+      'header [class*="location" i]',
+      'nav [class*="location" i]',
+      '[class*="navbar" i] [class*="address" i]',
+      '[class*="navbar" i] [class*="location" i]',
+      '[class*="topBar" i] [class*="address" i]',
+      '[class*="topBar" i] [class*="location" i]',
+      '[data-testid*="address"]',
+      '[data-testid*="location"]',
+      '[class*="deliverTo" i]',
+      '[class*="deliver-to" i]',
+      '[class*="DeliveryAddress" i]',
+      '[class*="delivery-address" i]',
+      '[class*="LocationDisplay" i]',
+      '[class*="location-display" i]',
+    ];
+
+    for (const selector of addressSelectors) {
+      try {
+        const el = document.querySelector(selector);
+        if (el) {
+          const text = el.textContent.trim();
+          if (text && text.length > 2 && text.length < 300) {
+            console.log(`[SE-GrabFood] Detected delivery location via "${selector}": "${text}"`);
+            return text;
+          }
+        }
+      } catch {
+        // Selector may be invalid in some environments, skip
+      }
+    }
+
+    // Strategy 2: Look for any element in the top 200px of the page
+    // that contains location-related keywords
+    try {
+      const topElements = document.querySelectorAll(
+        'header *, nav *, [class*="navbar" i] *, [class*="topBar" i] *'
+      );
+
+      for (const el of topElements) {
+        const text = el.textContent.trim();
+        // Look for text that looks like an address (contains common address keywords)
+        if (
+          text &&
+          text.length > 5 &&
+          text.length < 200 &&
+          el.children.length === 0 && // leaf node only
+          (text.includes('Deliver') ||
+            text.includes('deliver') ||
+            text.includes('Jl.') ||
+            text.includes('Jalan') ||
+            text.includes('Kota') ||
+            text.includes('Kec.') ||
+            text.includes('Kel.'))
+        ) {
+          console.log(`[SE-GrabFood] Detected delivery location from header text: "${text}"`);
+          return text;
+        }
+      }
+    } catch {
+      // Ignore errors during broad search
+    }
+
+    // Strategy 3: Check __NEXT_DATA__ for location/city info
+    try {
+      const scriptTag = document.querySelector('script#__NEXT_DATA__');
+      if (scriptTag) {
+        const nextData = JSON.parse(scriptTag.textContent);
+        const pageProps = nextData?.props?.pageProps;
+
+        const cityName =
+          pageProps?.city?.name ||
+          pageProps?.cityName ||
+          pageProps?.location?.city ||
+          pageProps?.location?.address ||
+          pageProps?.userLocation?.city ||
+          pageProps?.userLocation?.address ||
+          pageProps?.initialState?.location?.city ||
+          '';
+
+        if (cityName) {
+          console.log(`[SE-GrabFood] Detected city from __NEXT_DATA__: "${cityName}"`);
+          return cityName;
+        }
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+
+    console.warn('[SE-GrabFood] Could not detect current delivery city from page.');
+    return '';
+  }
+
   // ── Main Scraping Routine ──────────────────────────────────
 
   /**
@@ -486,6 +744,40 @@
    */
   async function scrapeRestaurants(regionCode, regionName) {
     const merchantMap = new Map();
+
+    // ── Phase 0: Detect actual delivery city ─────────────────
+    // GrabFood is GPS/geolocation-based only. The results shown depend
+    // on the browser's geolocation, NOT the requested region. We detect
+    // the actual city being shown so the caller knows where results are from.
+    console.log('[SE-GrabFood] Phase 0: Detecting actual delivery city...');
+    const detectedCity = detectCurrentCity();
+
+    if (detectedCity) {
+      console.log(`[SE-GrabFood] GrabFood is showing results for: "${detectedCity}"`);
+
+      // Warn if the detected location doesn't seem to match the requested region
+      const regionLower = regionName.toLowerCase();
+      const detectedLower = detectedCity.toLowerCase();
+      if (
+        !detectedLower.includes(regionLower) &&
+        !regionLower.includes(detectedLower)
+      ) {
+        console.warn(
+          `[SE-GrabFood] LOCATION MISMATCH: Requested region "${regionName}" ` +
+          `but GrabFood is showing results for "${detectedCity}". ` +
+          `GrabFood uses browser geolocation — results are from the browser's ` +
+          `current location, not the requested region.`
+        );
+      }
+    } else {
+      console.warn(
+        '[SE-GrabFood] Could not detect current delivery city. ' +
+        'Results may not be from the requested region. GrabFood is GPS-based only.'
+      );
+    }
+
+    // ── CAPTCHA check before scraping begins ─────────────────
+    await waitForCaptchaResolution();
 
     // ── Phase 1: Extract from __NEXT_DATA__ ──────────────────
     console.log('[SE-GrabFood] Phase 1: Extracting from __NEXT_DATA__...');
@@ -544,6 +836,9 @@
         `[SE-GrabFood] Load More click #${loadMoreClicks}/${MAX_LOAD_MORE_CLICKS}`
       );
 
+      // Check for CAPTCHA after each load-more click
+      await waitForCaptchaResolution();
+
       // Wait for new content to load
       await sleep(LOAD_MORE_DELAY_MS);
 
@@ -580,7 +875,93 @@
       `[SE-GrabFood] Scraping complete. Total unique merchants: ${merchantMap.size}`
     );
 
-    return Array.from(merchantMap.values());
+    // ── Phase 4: Enrich with intercepted API data ────────────
+    // The MAIN-world interceptor captures search/recommended API
+    // responses which contain lat/lng, cuisine, and rating data.
+    console.log(
+      `[SE-GrabFood] Phase 4: Enriching with ${interceptedMerchants.size} intercepted API merchants...`
+    );
+
+    const merchants = Array.from(merchantMap.values());
+
+    for (const merchant of merchants) {
+      const apiData = interceptedMerchants.get(merchant.merchantId);
+      if (apiData) {
+        // Enrich with lat/lng from API
+        if (apiData.latitude != null && apiData.longitude != null) {
+          merchant.latitude = apiData.latitude;
+          merchant.longitude = apiData.longitude;
+        }
+        // Enrich cuisine if missing
+        if (!merchant.category && apiData.cuisine) {
+          merchant.category = apiData.cuisine;
+        }
+        // Enrich rating if missing
+        if (merchant.rating == null && apiData.rating != null) {
+          merchant.rating = apiData.rating;
+        }
+      }
+
+      // Backfill address with detected city
+      if (detectedCity) {
+        merchant.description = merchant.description
+          ? `${merchant.description} | GrabFood location: ${detectedCity}`
+          : `GrabFood location: ${detectedCity}`;
+
+        if (!merchant.address || merchant.address.trim() === '') {
+          merchant.address = detectedCity;
+        }
+      }
+    }
+
+    // Also add any intercepted merchants not found via DOM scraping
+    let apiOnlyCount = 0;
+    for (const [id, apiData] of interceptedMerchants) {
+      const alreadyExists = merchants.some((m) => m.merchantId === id);
+      if (!alreadyExists && apiData.name) {
+        merchants.push({
+          platform: 'grabfood',
+          merchantName: apiData.name,
+          merchantUrl: `https://food.grab.com/id/en/restaurant/${encodeURIComponent(apiData.name.replace(/\s+/g, '-').toLowerCase())}-${id}`,
+          merchantId: String(id),
+          address: detectedCity || '',
+          latitude: apiData.latitude,
+          longitude: apiData.longitude,
+          provinceCode: regionCode,
+          provinceName: regionName,
+          regencyCode: '',
+          regencyName: '',
+          districtCode: '',
+          districtName: '',
+          category: apiData.cuisine || '',
+          rating: apiData.rating,
+          totalProducts: null,
+          totalSold: null,
+          joinDate: '',
+          isOfficialStore: false,
+          phone: '',
+          description: detectedCity ? `GrabFood location: ${detectedCity}` : '',
+          scrapedAt: new Date().toISOString(),
+        });
+        apiOnlyCount++;
+      }
+    }
+
+    if (apiOnlyCount > 0) {
+      console.log(
+        `[SE-GrabFood] Added ${apiOnlyCount} API-only merchants not found in DOM.`
+      );
+    }
+
+    console.log(
+      `[SE-GrabFood] Final count: ${merchants.length} merchants ` +
+      `(${merchants.filter((m) => m.latitude != null).length} with lat/lng)`
+    );
+
+    return {
+      merchants,
+      detectedCity: detectedCity || null,
+    };
   }
 
   // ── Message Listener ───────────────────────────────────────
@@ -597,12 +978,17 @@
     );
 
     scrapeRestaurants(regionCode, regionName)
-      .then((merchants) => {
-        sendResponse({ success: true, merchants });
+      .then((result) => {
+        // scrapeRestaurants now returns { merchants, detectedCity }
+        sendResponse({
+          success: true,
+          merchants: result.merchants,
+          detectedCity: result.detectedCity,
+        });
       })
       .catch((err) => {
         console.error('[SE-GrabFood] Scraping error:', err);
-        sendResponse({ success: false, merchants: [], error: err.message });
+        sendResponse({ success: false, merchants: [], detectedCity: null, error: err.message });
       });
 
     // Return true to keep the message channel open for the async response

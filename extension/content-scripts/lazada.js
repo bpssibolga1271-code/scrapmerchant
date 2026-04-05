@@ -153,6 +153,119 @@
     }
   }
 
+  // ── CAPTCHA / Verification Detection ──────────────────────
+
+  /**
+   * Detect whether a CAPTCHA, verification challenge, or blocking
+   * dialog is currently visible on the page.  Lazada (Alibaba Group)
+   * commonly uses "baxia" slider-verify challenges.
+   *
+   * @returns {boolean} true when a CAPTCHA/challenge element is found
+   */
+  function detectCaptcha() {
+    // 1. Elements whose class or id contains known captcha keywords
+    const captchaKeywords = ['captcha', 'baxia', 'slide-verify', 'slide_verify'];
+    for (const keyword of captchaKeywords) {
+      const byClass = document.querySelector(
+        `[class*="${keyword}" i], [id*="${keyword}" i]`
+      );
+      if (byClass) return true;
+    }
+
+    // 2. Modal / dialog overlays that may block the page
+    const overlaySelectors = [
+      '.modal-mask',
+      '.ant-modal-mask',
+      '[class*="overlay"][class*="verify"]',
+      '[class*="dialog"][class*="verify"]',
+      '[role="dialog"]',
+    ];
+    for (const sel of overlaySelectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const style = window.getComputedStyle(el);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          // Only flag if the overlay text / children hint at verification
+          const text = el.textContent.toLowerCase();
+          if (
+            text.includes('verify') ||
+            text.includes('verifikasi') ||
+            text.includes('captcha') ||
+            text.includes('slide')
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+
+    // 3. Iframes with captcha-related sources
+    const iframes = document.querySelectorAll('iframe');
+    for (const iframe of iframes) {
+      const src = (iframe.getAttribute('src') || '').toLowerCase();
+      if (
+        src.includes('captcha') ||
+        src.includes('baxia') ||
+        src.includes('verify') ||
+        src.includes('slider') ||
+        src.includes('challenge')
+      ) {
+        return true;
+      }
+    }
+
+    // 4. Slide-to-verify type challenges (text-based detection)
+    const verifyPhrases = ['slide to verify', 'verify', 'verifikasi'];
+    const candidates = document.querySelectorAll(
+      'h1, h2, h3, h4, p, span, div, label'
+    );
+    for (const el of candidates) {
+      // Only check direct (shallow) text to avoid scanning entire subtrees
+      if (el.children.length > 10) continue;
+      const text = el.textContent.trim().toLowerCase();
+      if (text.length > 200) continue;
+
+      for (const phrase of verifyPhrases) {
+        if (text === phrase || text.startsWith(phrase)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Wait for the user to manually solve a CAPTCHA / verification
+   * challenge.  Notifies the service worker so the popup can
+   * display an appropriate status, then polls every 3 seconds
+   * until the challenge element disappears.
+   *
+   * @returns {Promise<void>}
+   */
+  async function waitForCaptchaResolution() {
+    console.log(
+      '[SE-Lazada] CAPTCHA/verification detected — waiting for user to solve it...'
+    );
+
+    chrome.runtime.sendMessage({
+      action: 'captchaDetected',
+      platform: 'lazada',
+    });
+
+    // Poll until the CAPTCHA is no longer present
+    while (detectCaptcha()) {
+      await sleep(3000);
+    }
+
+    console.log('[SE-Lazada] CAPTCHA resolved, resuming...');
+
+    chrome.runtime.sendMessage({
+      action: 'captchaResolved',
+      platform: 'lazada',
+    });
+  }
+
   // ── Extraction Logic ───────────────────────────────────────
 
   /**
@@ -538,13 +651,57 @@
   // ── Main Scraping Routine ──────────────────────────────────
 
   /**
+   * Check if a seller location text matches the target province/region.
+   * Lazada only filters at island level, so we need to verify the seller
+   * location against the province by checking if the location text
+   * contains the province name or known regency names.
+   * @param {string} locationText — seller location from the card (e.g. "Kota Gorontalo")
+   * @param {string} provinceName — target province (e.g. "SULAWESI TENGAH")
+   * @param {Object} region — region hierarchy with regency list
+   * @returns {boolean}
+   */
+  function locationMatchesProvince(locationText, provinceName, region) {
+    if (!locationText || !provinceName) return true; // no filter if missing data
+
+    const locLower = locationText.toLowerCase().trim();
+    const provLower = provinceName.toLowerCase().trim();
+
+    // Direct province name match
+    if (locLower.includes(provLower) || provLower.includes(locLower)) return true;
+
+    // Check against regency names from the region object
+    if (region?.regency?.name) {
+      const regencyLower = region.regency.name.toLowerCase();
+      if (locLower.includes(regencyLower) || regencyLower.includes(locLower)) return true;
+    }
+
+    // Check known regency/city names for common provinces
+    // Strip "Kota ", "Kab. ", "Kabupaten " prefixes for matching
+    const cleanLoc = locLower
+      .replace(/^kota\s+/i, '')
+      .replace(/^kab\.\s*/i, '')
+      .replace(/^kabupaten\s+/i, '')
+      .trim();
+
+    // Check if the province name (without "SULAWESI", "JAWA", etc.) appears
+    const provParts = provLower.split(/\s+/);
+    for (const part of provParts) {
+      if (part.length > 3 && cleanLoc.includes(part)) return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Collect unique merchants from all product cards currently
-   * visible on the page.
+   * visible on the page. Filters sellers by location if provinceName is provided.
    * @param {Map<string, Object>} merchantMap — existing merchants (keyed by shop URL)
    * @param {string} regionCode
    * @param {string} regionName
+   * @param {string} provinceName — province name for location filtering
+   * @param {Object} region — full region hierarchy
    */
-  function collectMerchantsFromPage(merchantMap, regionCode, regionName) {
+  function collectMerchantsFromPage(merchantMap, regionCode, regionName, provinceName, region) {
     const cards = findProductCards();
 
     for (const card of cards) {
@@ -557,10 +714,18 @@
       if (merchantMap.has(urlKey)) continue;
 
       const location = extractLocation(card);
+
+      // Filter: if location is detected, check if it matches the target province
+      if (location && provinceName && !locationMatchesProvince(location, provinceName, region)) {
+        console.log(`[SE-Lazada] Filtered out "${shopInfo.name}" — location "${location}" not in "${provinceName}"`);
+        continue;
+      }
+
       const official = isOfficialStore(card);
       const rating = extractRating(card);
       const totalSold = extractSoldCount(card);
 
+      // Use location text as regencyName since Lazada shows city-level location
       merchantMap.set(urlKey, {
         platform: 'lazada',
         merchantName: shopInfo.name,
@@ -570,7 +735,7 @@
         provinceCode: regionCode,
         provinceName: regionName,
         regencyCode: '',
-        regencyName: '',
+        regencyName: location || '',
         districtCode: '',
         districtName: '',
         category: '',
@@ -635,9 +800,14 @@
    * @param {string} regionName
    * @returns {Promise<Object[]>}
    */
-  async function scrapeAllPages(regionCode, regionName) {
+  async function scrapeAllPages(regionCode, regionName, provinceName, region) {
     const merchantMap = new Map();
     let currentPage = 1;
+
+    // Check for CAPTCHA before starting the scrape
+    if (detectCaptcha()) {
+      await waitForCaptchaResolution();
+    }
 
     while (currentPage <= MAX_PAGES) {
       console.log(
@@ -658,9 +828,9 @@
       // Extra wait for lazy renders
       await sleep(1000);
 
-      // Collect merchants from current page
+      // Collect merchants from current page (with province filtering)
       const previousCount = merchantMap.size;
-      collectMerchantsFromPage(merchantMap, regionCode, regionName);
+      collectMerchantsFromPage(merchantMap, regionCode, regionName, provinceName, region);
 
       const newCount = merchantMap.size - previousCount;
       console.log(
@@ -677,6 +847,11 @@
 
         // Wait for navigation / new page to load
         await sleep(NEXT_PAGE_DELAY_MS);
+
+        // Check for CAPTCHA after page navigation
+        if (detectCaptcha()) {
+          await waitForCaptchaResolution();
+        }
 
         // Wait for new products to appear
         await waitForProducts(PAGE_LOAD_TIMEOUT_MS);
@@ -699,13 +874,13 @@
       return false;
     }
 
-    const { regionCode, regionName } = message;
+    const { regionCode, regionName, provinceName, region } = message;
 
     console.log(
-      `[SE-Lazada] Received startScrape for region ${regionCode} (${regionName})`
+      `[SE-Lazada] Received startScrape for region ${regionCode} (${regionName}), province: ${provinceName}`
     );
 
-    scrapeAllPages(regionCode, regionName)
+    scrapeAllPages(regionCode, regionName, provinceName, region)
       .then((merchants) => {
         sendResponse({ success: true, merchants });
       })
