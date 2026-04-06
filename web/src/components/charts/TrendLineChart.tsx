@@ -49,13 +49,14 @@ export default function TrendLineChart({ data }: TrendLineChartProps) {
               />
               <YAxis
                 tick={{ fontSize: 12 }}
-                tickFormatter={(value: number) =>
-                  value >= 1000 ? `${(value / 1000).toFixed(0)}k` : `${value}`
-                }
+                tickFormatter={(value) => {
+                const num = Number(value ?? 0);
+                return num >= 1000 ? `${(num / 1000).toFixed(0)}k` : `${num}`;
+              }}
               />
               <Tooltip
-                formatter={(value: number | undefined) => [
-                  (value ?? 0).toLocaleString(),
+                formatter={(value) => [
+                  Number(value ?? 0).toLocaleString(),
                   'Merchant',
                 ]}
                 contentStyle={{

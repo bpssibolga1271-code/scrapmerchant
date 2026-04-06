@@ -48,8 +48,8 @@ export default function ProvinceBarChart({ data }: ProvinceBarChartProps) {
                 tick={{ fontSize: 11 }}
               />
               <Tooltip
-                formatter={(value: number | undefined) => [
-                  (value ?? 0).toLocaleString(),
+                formatter={(value) => [
+                  Number(value ?? 0).toLocaleString(),
                   'Merchant',
                 ]}
                 contentStyle={{

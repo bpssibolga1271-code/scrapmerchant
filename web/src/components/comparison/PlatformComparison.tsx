@@ -121,10 +121,10 @@ export default function PlatformComparison({
                 border: '1px solid #e5e7eb',
                 boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
               }}
-              formatter={(value: number | undefined, name: string | undefined) => [
-                (value ?? 0).toLocaleString(),
-                PLATFORM_LABELS[name ?? ''] || name || '',
-              ]}
+             formatter={(value, name) => [
+              Number(value ?? 0).toLocaleString(),
+              PLATFORM_LABELS[String(name ?? '')] || String(name ?? ''),
+            ]}
             />
             <Legend
               formatter={(value: string) => (
