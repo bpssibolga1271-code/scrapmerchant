@@ -53,8 +53,8 @@ export default function PlatformPieChart({ data }: PlatformPieChartProps) {
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: number | undefined) => [
-                  (value ?? 0).toLocaleString(),
+                formatter={(value) => [
+                  Number(value ?? 0).toLocaleString(),
                   'Merchant',
                 ]}
                 contentStyle={{
